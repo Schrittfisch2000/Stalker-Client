@@ -8,9 +8,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
+from .storage import data_file
 
-CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "/config/portal-settings.json"))
-SECRET_FILE = Path(os.getenv("SECRET_FILE", "/config/.stalker-secret"))
+CONFIG_FILE = Path(os.getenv("CONFIG_FILE", str(data_file("portal-einstellungen.json"))))
+SECRET_FILE = Path(os.getenv("SECRET_FILE", str(data_file(".stalker-geheimnis"))))
 
 
 class PortalConfig(BaseModel):
