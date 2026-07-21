@@ -163,7 +163,16 @@ class StalkerClient:
     async def episodes(self, series_id: str, season: str | None = None) -> Any:
         clean_id = str(series_id).split(":", 1)[0].strip()
         clean_season = str(season).split(":", 1)[0].strip() if season else None
-        return await self.call("series", "get_episodes", movie_id=clean_id, season_id=clean_season)
+        return await self.call(
+            "series",
+            "get_ordered_list",
+            movie_id=clean_id,
+            series_id=clean_id,
+            season_id=clean_season,
+            episode_id="*",
+            p=1,
+            sortby="added",
+        )
 
     async def create_link(self, media_type: str, command: str, series: str | None = None) -> str:
         result = await self.call(
