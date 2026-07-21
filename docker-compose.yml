@@ -5,6 +5,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      CONFIG_FILE: /config/portal-settings.json
+    volumes:
+      - ./:/config
     ports:
       - "${HOST_PORT:-8080}:8080"
     healthcheck:
