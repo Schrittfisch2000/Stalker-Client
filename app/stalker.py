@@ -198,34 +198,38 @@ class StalkerClient:
         clean_series = str(series).split(":", 1)[0].strip() if series else None
         episode_id = item.get("episode_id") or item.get("id") or item.get("movie_id")
         movie_id = item.get("movie_id") or item.get("series_id")
-        common = {
+        basic = {
             "cmd": command,
             "forced_storage": "0",
             "disable_ad": "0",
             "download": "0",
-            "series": clean_series,
-            "episode_id": episode_id,
-            "movie_id": movie_id,
         }
+        parameter_attempts = [
+            {**basic, "series": clean_series},
+            {**basic, "series": clean_series, "episode_id": episode_id, "movie_id": movie_id},
+            basic,
+        ]
         media_attempts = [media_type]
         if media_type == "series":
             media_attempts.extend(["vod", "itv"])
 
         errors: list[str] = []
         for candidate in dict.fromkeys(media_attempts):
-            try:
-                result = await self.call(candidate, "create_link", **common)
-            except (PortalError, httpx.HTTPError) as exc:
-                errors.append(f"{candidate}: {exc}")
-                continue
-            if isinstance(result, dict):
-                value = result.get("cmd") or result.get("url") or result.get("link")
-                if value:
-                    direct = self._direct_url(str(value))
-                    if direct:
-                        return direct
-            errors.append(f"{candidate}: no stream URL")
-        raise PortalError("Portal could not create a stream link" + (f" ({'; '.join(errors)})" if errors else ""))
+            for params in parameter_attempts:
+                try:
+                    result = await self.call(candidate, "create_link", **params)
+                except (PortalError, httpx.HTTPError) as exc:
+                    errors.append(f"{candidate}: {exc}")
+                    continue
+                if isinstance(result, dict):
+                    value = result.get("cmd") or result.get("url") or result.get("link")
+                    if value:
+                        direct = self._direct_url(str(value))
+                        if direct:
+                            return direct
+                errors.append(f"{candidate}: no stream URL")
+        summary = "; ".join(errors[-4:])
+        raise PortalError("Portal could not create a stream link" + (f" ({summary})" if summary else ""))
 
     def portal_headers_for_stream(self) -> dict[str, str]:
         headers = self.headers.copy()
