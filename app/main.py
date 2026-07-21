@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -22,7 +23,7 @@ from .stalker import PortalError, StalkerClient
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = configure_logging()
-app = FastAPI(title="Stalker Client", version="0.3.0")
+app = FastAPI(title="Stalker Client", version="0.3.1")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -99,9 +100,38 @@ def read_ticket(ticket: str, settings: Settings) -> str:
 
 
 def unwrap_listing(value: Any) -> Any:
+    while isinstance(value, dict):
+        if "data" in value:
+            value = value["data"]
+            continue
+        if "js" in value:
+            value = value["js"]
+            continue
+        break
     if isinstance(value, dict):
-        return value.get("data", value)
+        return list(value.values())
     return value
+
+
+def detect_stream_type(url: str, media_type: str) -> str:
+    path = urlparse(url).path.lower()
+    if path.endswith(".m3u8") or "m3u8" in url.lower():
+        return "hls"
+    if path.endswith((".ts", ".mpegts", ".m2ts")):
+        return "mpegts"
+    return "mpegts" if media_type == "itv" else "auto"
+
+
+def rewrite_hls_line(line: str, source_url: str, settings: Settings) -> str:
+    stripped = line.strip()
+    if stripped and not stripped.startswith("#"):
+        return f"/stream/{create_ticket(urljoin(source_url, stripped), settings)}"
+
+    def replace_uri(match: re.Match[str]) -> str:
+        absolute = urljoin(source_url, match.group(1))
+        return f'URI="/stream/{create_ticket(absolute, settings)}"'
+
+    return re.sub(r'URI="([^"]+)"', replace_uri, line)
 
 
 @app.exception_handler(PortalError)
@@ -195,8 +225,9 @@ async def play(payload: dict[str, Any], settings: Settings = Depends(settings_de
     if media_type not in {"itv", "vod", "series"} or not command:
         raise HTTPException(status_code=400, detail="type and cmd are required")
     url = await portal.create_link(media_type, command, str(series) if series is not None else None)
-    logger.info("Wiedergabe vorbereitet: Typ=%s", media_type)
-    return {"url": f"/stream/{create_ticket(url, settings)}"}
+    stream_type = detect_stream_type(url, media_type)
+    logger.info("Wiedergabe vorbereitet: Typ=%s, Format=%s", media_type, stream_type)
+    return {"url": f"/stream/{create_ticket(url, settings)}", "stream_type": stream_type}
 
 
 async def iter_response(response: httpx.Response, client_instance: httpx.AsyncClient) -> AsyncIterator[bytes]:
@@ -209,12 +240,15 @@ async def iter_response(response: httpx.Response, client_instance: httpx.AsyncCl
 
 
 @app.get("/stream/{ticket}")
-async def stream(ticket: str, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
+async def stream(ticket: str, request: Request, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
     url = read_ticket(ticket, settings)
     http = httpx.AsyncClient(timeout=None, verify=settings.verify_tls, follow_redirects=True)
+    headers = portal.portal_headers_for_stream()
+    if request.headers.get("range"):
+        headers["Range"] = request.headers["range"]
     try:
-        request = http.build_request("GET", url, headers=portal.portal_headers_for_stream(), cookies=portal.cookies)
-        response = await http.send(request, stream=True)
+        upstream_request = http.build_request("GET", url, headers=headers, cookies=portal.cookies)
+        response = await http.send(upstream_request, stream=True)
         response.raise_for_status()
     except Exception as exc:
         await http.aclose()
@@ -222,22 +256,16 @@ async def stream(ticket: str, settings: Settings = Depends(settings_dependency),
         raise HTTPException(status_code=502, detail="Stream could not be opened") from exc
 
     content_type = response.headers.get("content-type", "application/octet-stream")
+    logger.info("Stream geöffnet: Status=%s, Content-Type=%s", response.status_code, content_type)
     if "mpegurl" in content_type.lower() or urlparse(url).path.lower().endswith(".m3u8"):
         body = (await response.aread()).decode("utf-8", errors="replace")
         await response.aclose()
         await http.aclose()
-        rewritten: list[str] = []
-        for line in body.splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                absolute = urljoin(url, stripped)
-                rewritten.append(f"/stream/{create_ticket(absolute, settings)}")
-            else:
-                rewritten.append(line)
+        rewritten = [rewrite_hls_line(line, url, settings) for line in body.splitlines()]
         return StreamingResponse(iter([("\n".join(rewritten) + "\n").encode()]), media_type="application/vnd.apple.mpegurl")
 
-    headers = {}
-    for name in ("content-length", "accept-ranges", "content-range"):
+    response_headers = {}
+    for name in ("content-length", "accept-ranges", "content-range", "cache-control"):
         if name in response.headers:
-            headers[name] = response.headers[name]
-    return StreamingResponse(iter_response(response, http), status_code=response.status_code, media_type=content_type, headers=headers)
+            response_headers[name] = response.headers[name]
+    return StreamingResponse(iter_response(response, http), status_code=response.status_code, media_type=content_type, headers=response_headers)
