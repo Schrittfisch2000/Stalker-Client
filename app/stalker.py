@@ -114,9 +114,34 @@ class StalkerClient:
     async def categories(self, media_type: str) -> Any:
         return await self.call(media_type, "get_genres" if media_type == "itv" else "get_categories")
 
+    @staticmethod
+    def _as_list(value: Any) -> list[dict[str, Any]]:
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            data = value.get("data", value)
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+            if isinstance(data, dict):
+                return [item for item in data.values() if isinstance(item, dict)]
+        return []
+
     async def listing(self, media_type: str, category: str = "*", page: int = 1, search: str = "") -> Any:
         if media_type == "itv":
-            return await self.call("itv", "get_all_channels")
+            raw = await self.call("itv", "get_all_channels")
+            channels = self._as_list(raw)
+            if category not in {"", "*", "all"}:
+                channels = [
+                    item for item in channels
+                    if str(item.get("tv_genre_id") or item.get("genre_id") or item.get("category_id") or "") == str(category)
+                ]
+            if search:
+                needle = search.casefold()
+                channels = [
+                    item for item in channels
+                    if needle in str(item.get("name") or item.get("title") or item.get("ch_name") or "").casefold()
+                ]
+            return channels
         return await self.call(
             media_type,
             "get_ordered_list",
