@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -13,7 +14,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -23,19 +24,32 @@ from .logging_config import configure_logging, masked_mac
 from .stalker import PortalError, StalkerClient
 
 BASE_DIR = Path(__file__).resolve().parent
+HLS_ROOT = Path("/tmp/stalker-client-hls")
+HLS_ROOT.mkdir(parents=True, exist_ok=True)
 logger = configure_logging()
-app = FastAPI(title="Stalker Client", version="0.4.0")
+app = FastAPI(title="Stalker Client", version="0.5.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+_hls_sessions: dict[str, dict[str, Any]] = {}
+_hls_lock = asyncio.Lock()
+_cleanup_task: asyncio.Task | None = None
 
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    global _cleanup_task
     logger.info("Stalker Client gestartet")
+    _cleanup_task = asyncio.create_task(cleanup_hls_sessions())
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    if _cleanup_task:
+        _cleanup_task.cancel()
+    for session in list(_hls_sessions.values()):
+        process = session.get("process")
+        if process and process.returncode is None:
+            process.terminate()
     logger.info("Stalker Client beendet")
 
 
@@ -72,16 +86,17 @@ def _b64decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def create_ticket(url: str, settings: Settings, ttl: int = 7200) -> str:
+def create_ticket(url: str, settings: Settings, media_type: str = "") -> str:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(status_code=502, detail="Portal returned an unsupported stream URL")
-    payload = _b64encode(json.dumps({"u": url, "e": int(time.time()) + ttl}, separators=(",", ":")).encode())
+    data = {"u": url, "m": media_type, "e": int(time.time()) + 7200}
+    payload = _b64encode(json.dumps(data, separators=(",", ":")).encode())
     signature = _b64encode(hmac.new(settings.app_secret.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{signature}"
 
 
-def read_ticket(ticket: str, settings: Settings) -> str:
+def read_ticket(ticket: str, settings: Settings) -> dict[str, str]:
     try:
         payload, signature = ticket.split(".", 1)
         expected = _b64encode(hmac.new(settings.app_secret.encode(), payload.encode(), hashlib.sha256).digest())
@@ -94,7 +109,7 @@ def read_ticket(ticket: str, settings: Settings) -> str:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ValueError("url")
-        return url
+        return {"url": url, "media_type": str(data.get("m", ""))}
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
         logger.warning("Ungültiges oder abgelaufenes Stream-Ticket")
         raise HTTPException(status_code=403, detail="Invalid or expired stream ticket") from exc
@@ -114,11 +129,9 @@ def unwrap_listing(value: Any) -> Any:
     return value
 
 
-def detect_stream_type(url: str, media_type: str) -> str:
+def is_hls(url: str) -> bool:
     path = urlparse(url).path.lower()
-    if path.endswith(".m3u8") or "m3u8" in url.lower():
-        return "hls"
-    return "transcode" if media_type in {"itv", "vod", "series"} else "native"
+    return path.endswith(".m3u8") or "m3u8" in url.lower()
 
 
 def rewrite_hls_line(line: str, source_url: str, settings: Settings) -> str:
@@ -218,17 +231,26 @@ async def episodes(series_id: str, season: str | None = None, portal: StalkerCli
 
 
 @app.post("/api/play")
-async def play(payload: dict[str, Any], settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)) -> dict[str, str]:
+async def play(
+    payload: dict[str, Any],
+    settings: Settings = Depends(settings_dependency),
+    portal: StalkerClient = Depends(client),
+) -> dict[str, str]:
     media_type = str(payload.get("type", ""))
     command = str(payload.get("cmd", ""))
     series = payload.get("series")
+    item = payload.get("item") if isinstance(payload.get("item"), dict) else {}
     if media_type not in {"itv", "vod", "series"} or not command:
         raise HTTPException(status_code=400, detail="type and cmd are required")
-    url = await portal.create_link(media_type, command, str(series) if series is not None else None)
-    stream_type = detect_stream_type(url, media_type)
-    ticket = create_ticket(url, settings)
-    playback_url = f"/stream/{ticket}" if stream_type == "hls" else f"/transcode/{ticket}"
-    logger.info("Wiedergabe vorbereitet: Typ=%s, Format=%s", media_type, stream_type)
+    url = await portal.create_link(media_type, command, str(series) if series is not None else None, item)
+    ticket = create_ticket(url, settings, media_type)
+    if is_hls(url):
+        playback_url = f"/stream/{ticket}"
+        stream_type = "hls"
+    else:
+        playback_url = f"/hls/{ticket}/index.m3u8"
+        stream_type = "hls"
+    logger.info("Wiedergabe vorbereitet: Typ=%s, Format=%s", media_type, "direct-hls" if is_hls(url) else "ffmpeg-hls")
     return {"url": playback_url, "stream_type": stream_type}
 
 
@@ -241,66 +263,140 @@ async def iter_response(response: httpx.Response, client_instance: httpx.AsyncCl
         await client_instance.aclose()
 
 
-async def iter_ffmpeg(process: asyncio.subprocess.Process) -> AsyncIterator[bytes]:
-    stderr_task = asyncio.create_task(process.stderr.read()) if process.stderr else None
-    try:
-        if process.stdout is None:
+def session_id_for(ticket: str) -> str:
+    return hashlib.sha256(ticket.encode()).hexdigest()[:24]
+
+
+async def log_ffmpeg(session_id: str, process: asyncio.subprocess.Process) -> None:
+    if process.stderr is None:
+        return
+    lines: list[str] = []
+    while True:
+        line = await process.stderr.readline()
+        if not line:
+            break
+        text = line.decode("utf-8", errors="replace").strip()
+        if text:
+            lines.append(text)
+            if len(lines) > 20:
+                lines.pop(0)
+    code = await process.wait()
+    if code != 0:
+        logger.error("FFmpeg-HLS %s beendet (%s): %s", session_id, code, " | ".join(lines[-8:]))
+    else:
+        logger.info("FFmpeg-HLS %s beendet", session_id)
+
+
+async def ensure_hls_session(ticket: str, settings: Settings, portal: StalkerClient) -> tuple[str, Path]:
+    session_id = session_id_for(ticket)
+    directory = HLS_ROOT / session_id
+    playlist = directory / "index.m3u8"
+    async with _hls_lock:
+        current = _hls_sessions.get(session_id)
+        if current and current["process"].returncode is None:
+            current["last_access"] = time.time()
+            return session_id, playlist
+
+        data = read_ticket(ticket, settings)
+        media_type = data["media_type"]
+        shutil.rmtree(directory, ignore_errors=True)
+        directory.mkdir(parents=True, exist_ok=True)
+        headers = portal.portal_headers_for_stream()
+        headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
+        ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+        live = media_type == "itv"
+        command = [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
+            "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
+            "-i", data["url"],
+            "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
+            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-profile:v", "main", "-pix_fmt", "yuv420p",
+            "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
+            "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "160k",
+            "-max_muxing_queue_size", "2048",
+            "-f", "hls", "-hls_time", "4",
+            "-hls_segment_filename", str(directory / "segment-%06d.ts"),
+        ]
+        if live:
+            command += ["-hls_list_size", "8", "-hls_flags", "delete_segments+append_list+omit_endlist+independent_segments"]
+        else:
+            command += ["-hls_playlist_type", "event", "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file"]
+        command.append(str(playlist))
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
+        _hls_sessions[session_id] = {
+            "process": process,
+            "directory": directory,
+            "last_access": time.time(),
+            "media_type": media_type,
+        }
+        asyncio.create_task(log_ffmpeg(session_id, process))
+        logger.info("FFmpeg-HLS gestartet: Session=%s, Typ=%s", session_id, media_type)
+    return session_id, playlist
+
+
+async def wait_for_file(path: Path, session_id: str, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists() and path.stat().st_size > 0:
             return
-        while True:
-            chunk = await process.stdout.read(64 * 1024)
-            if not chunk:
-                break
-            yield chunk
-    finally:
-        if process.returncode is None:
-            process.terminate()
-        await process.wait()
-        stderr = await stderr_task if stderr_task else b""
-        if process.returncode not in (0, -15) and stderr:
-            logger.error("FFmpeg beendet: %s", stderr.decode("utf-8", errors="replace")[-1000:])
+        session = _hls_sessions.get(session_id)
+        if session and session["process"].returncode is not None:
+            break
+        await asyncio.sleep(0.2)
+    raise HTTPException(status_code=502, detail="FFmpeg could not prepare the stream")
 
 
-@app.get("/transcode/{ticket}")
-async def transcode(ticket: str, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
-    url = read_ticket(ticket, settings)
-    headers = portal.portal_headers_for_stream()
-    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
-    ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
-    command = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "error",
-        "-headers", ffmpeg_headers,
-        "-i", url,
-        "-map", "0:v:0?",
-        "-map", "0:a:0?",
-        "-sn",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-        "-f", "mp4",
-        "pipe:1",
-    ]
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except OSError as exc:
-        logger.exception("FFmpeg konnte nicht gestartet werden")
-        raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
-    logger.info("FFmpeg-Stream gestartet")
-    return StreamingResponse(iter_ffmpeg(process), media_type="video/mp4", headers={"Cache-Control": "no-store"})
+@app.get("/hls/{ticket}/index.m3u8")
+async def hls_playlist(ticket: str, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
+    session_id, playlist = await ensure_hls_session(ticket, settings, portal)
+    await wait_for_file(playlist, session_id)
+    _hls_sessions[session_id]["last_access"] = time.time()
+    return FileResponse(playlist, media_type="application/vnd.apple.mpegurl", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/hls/{ticket}/{filename}")
+async def hls_segment(ticket: str, filename: str, settings: Settings = Depends(settings_dependency)):
+    if not re.fullmatch(r"segment-\d{6}\.ts", filename):
+        raise HTTPException(status_code=404, detail="Segment not found")
+    read_ticket(ticket, settings)
+    session_id = session_id_for(ticket)
+    session = _hls_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Stream session not found")
+    path = Path(session["directory"]) / filename
+    await wait_for_file(path, session_id, 10.0)
+    session["last_access"] = time.time()
+    return FileResponse(path, media_type="video/mp2t", headers={"Cache-Control": "no-store"})
+
+
+async def cleanup_hls_sessions() -> None:
+    while True:
+        await asyncio.sleep(30)
+        now = time.time()
+        for session_id, session in list(_hls_sessions.items()):
+            max_idle = 60 if session.get("media_type") == "itv" else 300
+            if now - session["last_access"] <= max_idle:
+                continue
+            process = session["process"]
+            if process.returncode is None:
+                process.terminate()
+            shutil.rmtree(session["directory"], ignore_errors=True)
+            _hls_sessions.pop(session_id, None)
+            logger.info("HLS-Session bereinigt: %s", session_id)
 
 
 @app.get("/stream/{ticket}")
 async def stream(ticket: str, request: Request, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
-    url = read_ticket(ticket, settings)
+    data = read_ticket(ticket, settings)
+    url = data["url"]
     http = httpx.AsyncClient(timeout=None, verify=settings.verify_tls, follow_redirects=True)
     headers = portal.portal_headers_for_stream()
     if request.headers.get("range"):
