@@ -16,6 +16,10 @@ class PortalError(RuntimeError):
 
 
 class StalkerClient:
+    _channel_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+    _channel_cache_lock = asyncio.Lock()
+    _channel_cache_ttl = 90.0
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._token: str | None = None
@@ -46,6 +50,10 @@ class StalkerClient:
             "timezone": "Europe/Berlin",
             "adult": "1",
         }
+
+    @property
+    def _cache_key(self) -> str:
+        return f"{self.settings.portal_url}|{self.settings.portal_mac}"
 
     async def _request(self, params: dict[str, Any], *, retry_auth: bool = True) -> Any:
         async with httpx.AsyncClient(
@@ -128,19 +136,30 @@ class StalkerClient:
                 return [item for item in data.values() if isinstance(item, dict)]
         return []
 
+    async def _all_channels(self, *, force: bool = False) -> list[dict[str, Any]]:
+        key = self._cache_key
+        cached = self._channel_cache.get(key)
+        if not force and cached and time.time() - cached[0] < self._channel_cache_ttl:
+            return cached[1]
+        async with self._channel_cache_lock:
+            cached = self._channel_cache.get(key)
+            if not force and cached and time.time() - cached[0] < self._channel_cache_ttl:
+                return cached[1]
+            channels = self._as_list(await self.call("itv", "get_all_channels", show_adult="1", adult="1"))
+            self._channel_cache[key] = (time.time(), channels)
+            return channels
+
     async def categories(self, media_type: str) -> Any:
         action = "get_genres" if media_type == "itv" else "get_categories"
         categories = self._as_list(await self.call(media_type, action, show_adult="1", adult="1"))
         if media_type != "itv":
             return categories
 
-        # Manche Portale liefern Adult-Genres nicht in get_genres, obwohl die
-        # Sender in get_all_channels vorhanden sind. Fehlende Genres ergänzen.
         known_ids = {
             str(item.get("id") or item.get("genre_id") or item.get("category_id") or item.get("tv_genre_id"))
             for item in categories
         }
-        channels = self._as_list(await self.call("itv", "get_all_channels", show_adult="1", adult="1"))
+        channels = await self._all_channels()
         for channel in channels:
             genre_id = channel.get("tv_genre_id") or channel.get("genre_id") or channel.get("category_id")
             if genre_id is None or str(genre_id) in known_ids:
@@ -157,7 +176,7 @@ class StalkerClient:
 
     async def listing(self, media_type: str, category: str = "*", page: int = 1, search: str = "") -> Any:
         if media_type == "itv":
-            channels = self._as_list(await self.call("itv", "get_all_channels", show_adult="1", adult="1"))
+            channels = list(await self._all_channels())
             if category not in {"", "*", "all"}:
                 channels = [
                     item for item in channels
