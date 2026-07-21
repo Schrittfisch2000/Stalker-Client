@@ -15,11 +15,15 @@ services:
       TZ: Europe/Berlin
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
-      CONFIG_FILE: /konfiguration/portal-einstellungen.json
-      SECRET_FILE: /konfiguration/.stalker-geheimnis
-      LOG_FILE: /konfiguration/stalker-client.log
+      MAIN_DIRECTORY: /hauptordner
+      CONFIG_FILE: /hauptordner/portal-einstellungen.json
+      USERS_FILE: /hauptordner/benutzer.json
+      ACCESS_FILE: /hauptordner/benutzer-freigaben.json
+      HISTORY_FILE: /hauptordner/wiedergabeverlauf.json
+      SECRET_FILE: /hauptordner/.stalker-geheimnis
+      LOG_FILE: /hauptordner/stalker-client.log
     volumes:
-      - ./:/konfiguration
+      - ./:/hauptordner
     ports:
       - "8080:8080"
     labels:
