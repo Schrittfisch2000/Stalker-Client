@@ -1,4 +1,4 @@
-const state = { type: 'itv', category: '*', items: [], hls: null, configured: false };
+const state = { type: 'itv', category: '*', items: [], hls: null, mpegts: null, configured: false };
 const $ = (id) => document.getElementById(id);
 const sectionTitles = { itv: 'Live-TV', vod: 'Filme', series: 'Serien' };
 
@@ -20,6 +20,8 @@ function showMessage(text = '') {
 function normalizeArray(value) {
   if (Array.isArray(value)) return value;
   if (value && Array.isArray(value.data)) return value.data;
+  if (value && typeof value.data === 'object' && value.data) return Object.values(value.data);
+  if (value && typeof value === 'object') return Object.values(value).filter((entry) => entry && typeof entry === 'object');
   return [];
 }
 
@@ -60,9 +62,9 @@ async function loadCategories() {
     const all = [{ id: '*', title: 'Alle' }, ...values];
     $('categories').innerHTML = '';
     for (const category of all) {
-      const id = String(category.id ?? category.genre_id ?? category.category_id ?? '*');
+      const id = String(category.id ?? category.genre_id ?? category.category_id ?? category.tv_genre_id ?? '*');
       const button = document.createElement('button');
-      button.textContent = category.title || category.name || 'Kategorie';
+      button.textContent = category.title || category.name || category.genre_name || `Kategorie ${id}`;
       button.className = id === state.category ? 'active' : '';
       button.onclick = async () => { state.category = id; await loadCategories(); await loadContent(); };
       $('categories').append(button);
@@ -110,22 +112,45 @@ async function playItem(item, series = null) {
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || '';
     $('playerDialog').showModal();
-    attachPlayer(result.url);
+    attachPlayer(result.url, result.stream_type || 'auto');
     showMessage('');
     if (state.type === 'itv') loadEpg(item);
   } catch (error) { showMessage(error.message); }
 }
 
-function attachPlayer(url) {
+function destroyPlayer() {
   const video = $('player');
   if (state.hls) { state.hls.destroy(); state.hls = null; }
-  video.pause(); video.removeAttribute('src'); video.load();
-  if (window.Hls && Hls.isSupported()) {
+  if (state.mpegts) { state.mpegts.pause(); state.mpegts.unload(); state.mpegts.detachMediaElement(); state.mpegts.destroy(); state.mpegts = null; }
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+}
+
+function attachPlayer(url, streamType = 'auto') {
+  const video = $('player');
+  destroyPlayer();
+
+  if (streamType === 'mpegts' && window.mpegts && mpegts.isSupported()) {
+    state.mpegts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url }, { enableWorker: true, lazyLoad: false });
+    state.mpegts.attachMediaElement(video);
+    state.mpegts.load();
+    state.mpegts.play().catch(() => {});
+    state.mpegts.on(mpegts.Events.ERROR, (_, detail) => { $('playerMeta').textContent = `Playerfehler: ${detail}`; });
+    return;
+  }
+
+  if ((streamType === 'hls' || streamType === 'auto') && window.Hls && Hls.isSupported()) {
     state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-    state.hls.loadSource(url); state.hls.attachMedia(video);
+    state.hls.loadSource(url);
+    state.hls.attachMedia(video);
     state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
     state.hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) $('playerMeta').textContent = `Playerfehler: ${data.details}`; });
-  } else { video.src = url; video.play().catch(() => {}); }
+    return;
+  }
+
+  video.src = url;
+  video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
 }
 
 async function loadEpg(item) {
@@ -196,7 +221,7 @@ $('heroSettings').onclick = () => $('settingsDialog').showModal();
 $('closeSettings').onclick = () => $('settingsDialog').close();
 $('closePlayer').onclick = () => $('playerDialog').close();
 $('closeSeries').onclick = () => $('seriesDialog').close();
-$('playerDialog').addEventListener('close', () => { $('player').pause(); if (state.hls) { state.hls.destroy(); state.hls = null; } });
+$('playerDialog').addEventListener('close', destroyPlayer);
 
 (async () => {
   await loadConfig(true);
