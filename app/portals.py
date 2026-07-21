@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import ValidationError
 
 from .auth import require_admin, require_user
@@ -17,6 +17,7 @@ from .storage import data_file
 
 PORTALS_FILE = Path(os.getenv("PORTALS_FILE", str(data_file("portal-einstellungen.json"))))
 ASSIGNMENTS_FILE = Path(os.getenv("PORTAL_ASSIGNMENTS_FILE", str(data_file("portal-zuweisungen.json"))))
+PORTAL_COOKIE = "stalker_portal"
 router = APIRouter(prefix="/api")
 
 
@@ -57,7 +58,6 @@ def load_portal_store() -> dict[str, Any]:
     if not isinstance(raw, dict):
         return _empty_store()
 
-    # Automatische Migration der bisherigen Einzelportal-Struktur.
     if "portal_url" in raw and "portal_mac" in raw:
         try:
             config = PortalConfig.model_validate(raw)
@@ -84,15 +84,19 @@ def load_portal_store() -> dict[str, Any]:
     return {"default_portal_id": default_id, "portals": portals}
 
 
-def public_portal(portal: dict[str, Any]) -> dict[str, Any]:
-    return {
+def public_portal(portal: dict[str, Any], include_credentials: bool = True) -> dict[str, Any]:
+    result = {
         "id": str(portal.get("id", "")),
         "name": str(portal.get("name", "Portal")),
-        "portal_url": str(portal.get("portal_url", "")),
-        "portal_mac": str(portal.get("portal_mac", "")),
         "active": bool(portal.get("active", True)),
         "created_at": int(portal.get("created_at", 0) or 0),
     }
+    if include_credentials:
+        result.update({
+            "portal_url": str(portal.get("portal_url", "")),
+            "portal_mac": str(portal.get("portal_mac", "")),
+        })
+    return result
 
 
 def assigned_portal_ids(username: str, role: str) -> list[str]:
@@ -107,26 +111,64 @@ def assigned_portal_ids(username: str, role: str) -> list[str]:
     return [str(value) for value in values if str(value) in active]
 
 
+def selected_portal(request: Request, username: str, role: str) -> dict[str, Any] | None:
+    store = load_portal_store()
+    allowed = set(assigned_portal_ids(username, role))
+    available = [portal for portal in store["portals"] if str(portal.get("id")) in allowed and portal.get("active", True)]
+    if not available:
+        return None
+    requested_id = request.cookies.get(PORTAL_COOKIE, "")
+    selected = next((portal for portal in available if str(portal.get("id")) == requested_id), None)
+    if selected:
+        return selected
+    selected = next((portal for portal in available if str(portal.get("id")) == store["default_portal_id"]), None)
+    return selected or available[0]
+
+
+def portal_config_for_request(request: Request) -> PortalConfig | None:
+    user = require_user(request)
+    portal = selected_portal(request, user["username"], user["role"])
+    if not portal:
+        return None
+    return PortalConfig(portal_url=str(portal.get("portal_url", "")), portal_mac=str(portal.get("portal_mac", "")))
+
+
 @router.get("/portals")
 async def list_portals(request: Request) -> dict[str, Any]:
     user = require_user(request)
     store = load_portal_store()
     allowed = set(assigned_portal_ids(user["username"], user["role"]))
-    portals = [public_portal(portal) for portal in store["portals"] if str(portal.get("id")) in allowed]
-    return {"default_portal_id": store["default_portal_id"], "portals": portals}
+    selected = selected_portal(request, user["username"], user["role"])
+    portals = [
+        public_portal(portal, include_credentials=user["role"] == "admin")
+        for portal in store["portals"]
+        if str(portal.get("id")) in allowed
+    ]
+    return {
+        "default_portal_id": store["default_portal_id"],
+        "selected_portal_id": str(selected.get("id", "")) if selected else "",
+        "portals": portals,
+    }
+
+
+@router.post("/portals/select")
+async def select_portal(payload: dict[str, Any], request: Request, response: Response) -> dict[str, Any]:
+    user = require_user(request)
+    portal_id = str(payload.get("portal_id", ""))
+    allowed = assigned_portal_ids(user["username"], user["role"])
+    if portal_id not in allowed:
+        raise HTTPException(status_code=403, detail="Dieses Portal ist für deinen Benutzer nicht freigegeben")
+    response.set_cookie(PORTAL_COOKIE, portal_id, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 365)
+    return {"selected": True, "portal_id": portal_id}
 
 
 @router.post("/portals")
 async def create_portal(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     require_admin(request)
     try:
-        config = PortalConfig(
-            portal_url=str(payload.get("portal_url", "")),
-            portal_mac=str(payload.get("portal_mac", "")),
-        )
+        config = PortalConfig(portal_url=str(payload.get("portal_url", "")), portal_mac=str(payload.get("portal_mac", "")))
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
     store = load_portal_store()
     name = str(payload.get("name", "")).strip() or "Neues Portal"
     base_id = _slug(str(payload.get("id", "")).strip() or name)
@@ -136,15 +178,7 @@ async def create_portal(payload: dict[str, Any], request: Request) -> dict[str, 
     while portal_id in used:
         portal_id = f"{base_id}-{suffix}"
         suffix += 1
-
-    portal = {
-        "id": portal_id,
-        "name": name,
-        "portal_url": config.portal_url,
-        "portal_mac": config.portal_mac,
-        "active": bool(payload.get("active", True)),
-        "created_at": int(time.time()),
-    }
+    portal = {"id": portal_id, "name": name, "portal_url": config.portal_url, "portal_mac": config.portal_mac, "active": bool(payload.get("active", True)), "created_at": int(time.time())}
     store["portals"].append(portal)
     if not store["default_portal_id"]:
         store["default_portal_id"] = portal_id
@@ -159,21 +193,11 @@ async def update_portal(portal_id: str, payload: dict[str, Any], request: Reques
     portal = next((item for item in store["portals"] if str(item.get("id")) == portal_id), None)
     if portal is None:
         raise HTTPException(status_code=404, detail="Portal nicht gefunden")
-
     try:
-        config = PortalConfig(
-            portal_url=str(payload.get("portal_url", portal.get("portal_url", ""))),
-            portal_mac=str(payload.get("portal_mac", portal.get("portal_mac", ""))),
-        )
+        config = PortalConfig(portal_url=str(payload.get("portal_url", portal.get("portal_url", ""))), portal_mac=str(payload.get("portal_mac", portal.get("portal_mac", ""))))
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    portal.update({
-        "name": str(payload.get("name", portal.get("name", "Portal"))).strip() or "Portal",
-        "portal_url": config.portal_url,
-        "portal_mac": config.portal_mac,
-        "active": bool(payload.get("active", portal.get("active", True))),
-    })
+    portal.update({"name": str(payload.get("name", portal.get("name", "Portal"))).strip() or "Portal", "portal_url": config.portal_url, "portal_mac": config.portal_mac, "active": bool(payload.get("active", portal.get("active", True)))})
     _write(PORTALS_FILE, store)
     return {"updated": True, "portal": public_portal(portal)}
 
@@ -189,7 +213,6 @@ async def delete_portal(portal_id: str, request: Request) -> dict[str, bool]:
     if store["default_portal_id"] == portal_id:
         store["default_portal_id"] = str(remaining[0].get("id", "")) if remaining else ""
     _write(PORTALS_FILE, store)
-
     assignments = _read(ASSIGNMENTS_FILE, {})
     if isinstance(assignments, dict):
         for username, values in list(assignments.items()):
