@@ -1,4 +1,4 @@
-const state = { type: 'itv', category: '*', items: [], hls: null, mpegts: null, configured: false };
+const state = { type: 'itv', category: '*', items: [], hls: null, configured: false };
 const $ = (id) => document.getElementById(id);
 const sectionTitles = { itv: 'Live-TV', vod: 'Filme', series: 'Serien' };
 
@@ -27,7 +27,9 @@ function normalizeArray(value) {
 
 function titleOf(item) { return item.name || item.title || item.o_name || item.ch_name || 'Ohne Titel'; }
 function imageOf(item) { return item.logo || item.screenshot_uri || item.cover || item.poster || ''; }
-function commandOf(item) { return item.cmd || item.command || item.stream_url || ''; }
+function commandOf(item) { return item.cmd || item.command || item.stream_url || '';
+}
+function cleanId(value) { return String(value || '').split(':', 1)[0].trim(); }
 
 async function loadConfig(openWhenMissing = false) {
   const config = await api('/api/config');
@@ -110,9 +112,9 @@ async function playItem(item, series = null) {
   try {
     const result = await api('/api/play', { method: 'POST', body: JSON.stringify({ type: state.type, cmd, series }) });
     $('playerTitle').textContent = titleOf(item);
-    $('playerMeta').textContent = item.description || item.plot || '';
+    $('playerMeta').textContent = item.description || item.plot || 'Stream wird geladen …';
     $('playerDialog').showModal();
-    attachPlayer(result.url, result.stream_type || 'auto');
+    attachPlayer(result.url, result.stream_type || 'native');
     showMessage('');
     if (state.type === 'itv') loadEpg(item);
   } catch (error) { showMessage(error.message); }
@@ -121,35 +123,35 @@ async function playItem(item, series = null) {
 function destroyPlayer() {
   const video = $('player');
   if (state.hls) { state.hls.destroy(); state.hls = null; }
-  if (state.mpegts) { state.mpegts.pause(); state.mpegts.unload(); state.mpegts.detachMediaElement(); state.mpegts.destroy(); state.mpegts = null; }
   video.pause();
   video.removeAttribute('src');
   video.load();
 }
 
-function attachPlayer(url, streamType = 'auto') {
+function attachPlayer(url, streamType = 'native') {
   const video = $('player');
   destroyPlayer();
+  const absoluteUrl = new URL(url, window.location.href).href;
 
-  if (streamType === 'mpegts' && window.mpegts && mpegts.isSupported()) {
-    state.mpegts = mpegts.createPlayer({ type: 'mpegts', isLive: true, url }, { enableWorker: true, lazyLoad: false });
-    state.mpegts.attachMediaElement(video);
-    state.mpegts.load();
-    state.mpegts.play().catch(() => {});
-    state.mpegts.on(mpegts.Events.ERROR, (_, detail) => { $('playerMeta').textContent = `Playerfehler: ${detail}`; });
-    return;
-  }
+  video.onerror = () => {
+    const mediaError = video.error;
+    $('playerMeta').textContent = mediaError ? `Playerfehler ${mediaError.code}: ${mediaError.message || 'Wiedergabe nicht möglich'}` : 'Playerfehler: Wiedergabe nicht möglich';
+  };
+  video.onplaying = () => {
+    if ($('playerMeta').textContent === 'Stream wird geladen …') $('playerMeta').textContent = '';
+  };
 
-  if ((streamType === 'hls' || streamType === 'auto') && window.Hls && Hls.isSupported()) {
+  if (streamType === 'hls' && window.Hls && Hls.isSupported()) {
     state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-    state.hls.loadSource(url);
+    state.hls.loadSource(absoluteUrl);
     state.hls.attachMedia(video);
-    state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; }));
     state.hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) $('playerMeta').textContent = `Playerfehler: ${data.details}`; });
     return;
   }
 
-  video.src = url;
+  video.src = absoluteUrl;
+  video.load();
   video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
 }
 
@@ -171,7 +173,7 @@ async function loadEpg(item) {
 }
 
 async function openSeries(item) {
-  const id = item.id || item.movie_id || item.series_id;
+  const id = cleanId(item.movie_id || item.series_id || item.id);
   if (!id) return showMessage('Keine Serien-ID vorhanden.');
   $('seriesTitle').textContent = titleOf(item);
   $('episodes').innerHTML = '<span class="muted">Lade Episoden …</span>';
