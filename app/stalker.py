@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any
 from urllib.parse import quote
@@ -55,7 +56,9 @@ class StalkerClient:
         try:
             payload = response.json()
         except ValueError as exc:
-            raise PortalError("Portal returned invalid JSON") from exc
+            action = f"{params.get('type', '?')}/{params.get('action', '?')}"
+            content_type = response.headers.get("content-type", "unknown")
+            raise PortalError(f"Portal returned invalid JSON for {action} ({content_type})") from exc
         if isinstance(payload, dict) and payload.get("js") is not None:
             return payload["js"]
         return payload
@@ -65,12 +68,7 @@ class StalkerClient:
             if self._token and not force and time.time() - self._token_time < 900:
                 return self._token
             result = await self._request(
-                {
-                    "type": "stb",
-                    "action": "handshake",
-                    "token": "",
-                    "JsHttpRequest": "1-xml",
-                },
+                {"type": "stb", "action": "handshake", "token": "", "JsHttpRequest": "1-xml"},
                 retry_auth=False,
             )
             token = result.get("token") if isinstance(result, dict) else None
@@ -119,7 +117,7 @@ class StalkerClient:
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
         if isinstance(value, dict):
-            data = value.get("data", value)
+            data = value.get("data", value.get("js", value))
             if isinstance(data, list):
                 return [item for item in data if isinstance(item, dict)]
             if isinstance(data, dict):
@@ -128,8 +126,7 @@ class StalkerClient:
 
     async def listing(self, media_type: str, category: str = "*", page: int = 1, search: str = "") -> Any:
         if media_type == "itv":
-            raw = await self.call("itv", "get_all_channels")
-            channels = self._as_list(raw)
+            channels = self._as_list(await self.call("itv", "get_all_channels"))
             if category not in {"", "*", "all"}:
                 channels = [
                     item for item in channels
@@ -163,36 +160,72 @@ class StalkerClient:
     async def episodes(self, series_id: str, season: str | None = None) -> Any:
         clean_id = str(series_id).split(":", 1)[0].strip()
         clean_season = str(season).split(":", 1)[0].strip() if season else None
-        return await self.call(
-            "series",
-            "get_ordered_list",
-            movie_id=clean_id,
-            series_id=clean_id,
-            season_id=clean_season,
-            episode_id="*",
-            p=1,
-            sortby="added",
-        )
+        attempts = [
+            ("series", "get_ordered_list", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season, "episode_id": "*", "p": 1}),
+            ("series", "get_episodes", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season}),
+            ("vod", "get_ordered_list", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season, "p": 1}),
+        ]
+        errors: list[str] = []
+        for media_type, action, params in attempts:
+            try:
+                result = await self.call(media_type, action, **params)
+                if self._as_list(result):
+                    return result
+            except (PortalError, httpx.HTTPError) as exc:
+                errors.append(str(exc))
+        raise PortalError("Portal did not return episodes" + (f": {errors[-1]}" if errors else ""))
 
-    async def create_link(self, media_type: str, command: str, series: str | None = None) -> str:
-        result = await self.call(
-            media_type,
-            "create_link",
-            cmd=command,
-            forced_storage="0",
-            disable_ad="0",
-            download="0",
-            series=series,
-        )
-        if not isinstance(result, dict):
-            raise PortalError("Portal returned an invalid stream response")
-        value = result.get("cmd") or result.get("url")
-        if not value:
-            raise PortalError("Portal did not return a stream URL")
-        value = str(value).strip()
-        if value.startswith("ffmpeg "):
-            value = value[7:].strip()
-        return value
+    @staticmethod
+    def _direct_url(command: str) -> str | None:
+        value = command.strip().strip('"\'')
+        if value.lower().startswith("ffmpeg "):
+            value = value[7:].strip().strip('"\'')
+        match = re.search(r"https?://[^\s\"']+", value)
+        return match.group(0) if match else None
+
+    async def create_link(
+        self,
+        media_type: str,
+        command: str,
+        series: str | None = None,
+        item: dict[str, Any] | None = None,
+    ) -> str:
+        direct = self._direct_url(command)
+        if direct:
+            return direct
+
+        item = item or {}
+        clean_series = str(series).split(":", 1)[0].strip() if series else None
+        episode_id = item.get("episode_id") or item.get("id") or item.get("movie_id")
+        movie_id = item.get("movie_id") or item.get("series_id")
+        common = {
+            "cmd": command,
+            "forced_storage": "0",
+            "disable_ad": "0",
+            "download": "0",
+            "series": clean_series,
+            "episode_id": episode_id,
+            "movie_id": movie_id,
+        }
+        media_attempts = [media_type]
+        if media_type == "series":
+            media_attempts.extend(["vod", "itv"])
+
+        errors: list[str] = []
+        for candidate in dict.fromkeys(media_attempts):
+            try:
+                result = await self.call(candidate, "create_link", **common)
+            except (PortalError, httpx.HTTPError) as exc:
+                errors.append(f"{candidate}: {exc}")
+                continue
+            if isinstance(result, dict):
+                value = result.get("cmd") or result.get("url") or result.get("link")
+                if value:
+                    direct = self._direct_url(str(value))
+                    if direct:
+                        return direct
+            errors.append(f"{candidate}: no stream URL")
+        raise PortalError("Portal could not create a stream link" + (f" ({'; '.join(errors)})" if errors else ""))
 
     def portal_headers_for_stream(self) -> dict[str, str]:
         headers = self.headers.copy()
