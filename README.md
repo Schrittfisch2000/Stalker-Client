@@ -18,33 +18,47 @@ Dockerisierter Web-Client für kompatible Stalker-/MAG-Portale mit moderner Stre
 - rotierende Logdateien im Projekt-Hauptordner
 - Docker- und Docker-Compose-Betrieb ohne `.env`-Datei
 
-## Voraussetzungen
+## Installation
 
-- Docker
-- Docker Compose
+### Windows
 
-## Start
+1. Docker Desktop installieren und starten.
+2. Repository herunterladen oder klonen.
+3. PowerShell im Projektordner öffnen:
 
-Repository herunterladen oder klonen und anschließend im Projektordner ausführen:
+```powershell
+docker compose up --build -d
+```
+
+### Linux
+
+Docker Engine und das Docker-Compose-Plugin installieren. Danach im Projektordner:
 
 ```bash
 docker compose up --build -d
 ```
 
-Danach die Weboberfläche öffnen:
+Falls Docker nur mit `sudo` funktioniert:
+
+```bash
+sudo docker compose up --build -d
+```
+
+### macOS
+
+Docker Desktop installieren und starten. Danach im Projektordner:
+
+```bash
+docker compose up --build -d
+```
+
+Anschließend unter allen Systemen öffnen:
 
 ```text
 http://localhost:8080
 ```
 
-Beim ersten Aufruf öffnet sich automatisch der Dialog für:
-
-- Portal-URL
-- MAC-Adresse im Format `00:1A:79:XX:XX:XX`
-
-Nach dem Speichern versucht der Client, eine Verbindung zum Portal herzustellen.
-
-Eine `.env`-Datei ist nicht erforderlich.
+Beim ersten Aufruf Portal-URL und MAC-Adresse eingeben. Eine `.env`-Datei ist nicht erforderlich.
 
 ## Container verwalten
 
