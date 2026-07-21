@@ -19,6 +19,7 @@ class StalkerClient:
     _channel_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
     _channel_cache_lock = asyncio.Lock()
     _channel_cache_ttl = 90.0
+    _adult_genre_ids: dict[str, set[str]] = {}
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -136,6 +137,30 @@ class StalkerClient:
                 return [item for item in data.values() if isinstance(item, dict)]
         return []
 
+    @staticmethod
+    def _genre_values(item: dict[str, Any]) -> set[str]:
+        values: set[str] = set()
+        for key in ("tv_genre_id", "genre_id", "category_id", "genre", "category"):
+            value = item.get(key)
+            if value is None:
+                continue
+            for part in re.split(r"[,;|\s]+", str(value)):
+                part = part.strip()
+                if part:
+                    values.add(part)
+        return values
+
+    @staticmethod
+    def _is_adult_item(item: dict[str, Any]) -> bool:
+        truthy = {1, "1", True, "true", "yes", "on"}
+        if any(item.get(key) in truthy for key in ("adult", "censored", "is_adult", "for_adults", "restricted")):
+            return True
+        text = " ".join(
+            str(item.get(key) or "")
+            for key in ("name", "title", "ch_name", "genre_name", "tv_genre_name", "category_name")
+        ).casefold()
+        return any(word in text for word in ("xxx", "adult", "erotik", "18+", "for adults"))
+
     async def _all_channels(self, *, force: bool = False) -> list[dict[str, Any]]:
         key = self._cache_key
         cached = self._channel_cache.get(key)
@@ -155,32 +180,44 @@ class StalkerClient:
         if media_type != "itv":
             return categories
 
-        known_ids = {
-            str(item.get("id") or item.get("genre_id") or item.get("category_id") or item.get("tv_genre_id"))
-            for item in categories
-        }
+        adult_ids = self._adult_genre_ids.setdefault(self._cache_key, set())
+        known_ids: set[str] = set()
+        for category in categories:
+            category_id = str(category.get("id") or category.get("genre_id") or category.get("category_id") or category.get("tv_genre_id") or "")
+            if category_id:
+                known_ids.add(category_id)
+                if self._is_adult_item(category):
+                    adult_ids.add(category_id)
+
         channels = await self._all_channels()
         for channel in channels:
-            genre_id = channel.get("tv_genre_id") or channel.get("genre_id") or channel.get("category_id")
-            if genre_id is None or str(genre_id) in known_ids:
-                continue
-            title = (
-                channel.get("tv_genre_name")
-                or channel.get("genre_name")
-                or channel.get("category_name")
-                or ("XXX / Adult" if channel.get("censored") in {1, "1", True} or channel.get("adult") in {1, "1", True} else f"Kategorie {genre_id}")
-            )
-            categories.append({"id": str(genre_id), "title": str(title)})
-            known_ids.add(str(genre_id))
+            genre_ids = self._genre_values(channel)
+            if self._is_adult_item(channel):
+                adult_ids.update(genre_ids)
+            for genre_id in genre_ids:
+                if genre_id in known_ids:
+                    continue
+                title = (
+                    channel.get("tv_genre_name")
+                    or channel.get("genre_name")
+                    or channel.get("category_name")
+                    or ("XXX : FOR ADULTS" if self._is_adult_item(channel) else f"Kategorie {genre_id}")
+                )
+                categories.append({"id": genre_id, "title": str(title)})
+                known_ids.add(genre_id)
+                if self._is_adult_item(channel):
+                    adult_ids.add(genre_id)
         return categories
 
     async def listing(self, media_type: str, category: str = "*", page: int = 1, search: str = "") -> Any:
         if media_type == "itv":
             channels = list(await self._all_channels())
             if category not in {"", "*", "all"}:
+                requested = str(category)
+                adult_category = requested in self._adult_genre_ids.get(self._cache_key, set())
                 channels = [
                     item for item in channels
-                    if str(item.get("tv_genre_id") or item.get("genre_id") or item.get("category_id") or "") == str(category)
+                    if requested in self._genre_values(item) or (adult_category and self._is_adult_item(item))
                 ]
             if search:
                 needle = search.casefold()
