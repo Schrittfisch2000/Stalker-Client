@@ -4,7 +4,9 @@ import json
 import os
 import secrets
 import tempfile
+import time
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -64,6 +66,16 @@ def _atomic_write(path: Path, content: str) -> None:
             os.unlink(temporary)
 
 
+def _read_config_data() -> dict[str, Any]:
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        value = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def load_or_create_app_secret() -> str:
     configured = os.getenv("APP_SECRET", "").strip()
     if len(configured) >= 16:
@@ -83,10 +95,24 @@ def load_or_create_app_secret() -> str:
 
 
 def load_portal_config() -> PortalConfig | None:
-    if CONFIG_FILE.exists():
+    raw = _read_config_data()
+    if raw:
         try:
-            return PortalConfig.model_validate_json(CONFIG_FILE.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
+            if "portal_url" in raw and "portal_mac" in raw:
+                return PortalConfig.model_validate(raw)
+
+            portals = raw.get("portals", [])
+            if isinstance(portals, list) and portals:
+                default_id = str(raw.get("default_portal_id", ""))
+                selected = next(
+                    (portal for portal in portals if str(portal.get("id", "")) == default_id and portal.get("active", True)),
+                    None,
+                )
+                if selected is None:
+                    selected = next((portal for portal in portals if portal.get("active", True)), None)
+                if isinstance(selected, dict):
+                    return PortalConfig.model_validate(selected)
+        except (ValueError, TypeError):
             return None
 
     url = os.getenv("PORTAL_URL", "").strip()
@@ -97,6 +123,24 @@ def load_portal_config() -> PortalConfig | None:
 
 
 def save_portal_config(config: PortalConfig) -> None:
+    raw = _read_config_data()
+    if isinstance(raw.get("portals"), list):
+        portals = raw["portals"]
+        default_id = str(raw.get("default_portal_id", ""))
+        selected = next((portal for portal in portals if str(portal.get("id", "")) == default_id), None)
+        if selected is None:
+            selected = {
+                "id": "standard",
+                "name": "Standardportal",
+                "active": True,
+                "created_at": int(time.time()),
+            }
+            portals.append(selected)
+            raw["default_portal_id"] = "standard"
+        selected.update(config.model_dump())
+        _atomic_write(CONFIG_FILE, json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
+        return
+
     _atomic_write(CONFIG_FILE, config.model_dump_json(indent=2) + "\n")
 
 
