@@ -11,20 +11,28 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import ValidationError
 
-from .config import Settings, get_settings
+from .config import PortalConfig, Settings, get_settings, load_portal_config, save_portal_config
 from .stalker import PortalError, StalkerClient
 
 BASE_DIR = Path(__file__).resolve().parent
-app = FastAPI(title="Stalker Client", version="0.1.0")
+app = FastAPI(title="Stalker Client", version="0.2.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
-def client(settings: Settings = Depends(get_settings)) -> StalkerClient:
+def settings_dependency() -> Settings:
+    try:
+        return get_settings()
+    except (RuntimeError, ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def client(settings: Settings = Depends(settings_dependency)) -> StalkerClient:
     return StalkerClient(settings)
 
 
@@ -71,7 +79,7 @@ def unwrap_listing(value: Any) -> Any:
 
 @app.exception_handler(PortalError)
 async def portal_error_handler(_: Request, exc: PortalError):
-    return StreamingResponse(iter([json.dumps({"detail": str(exc)}).encode()]), status_code=502, media_type="application/json")
+    return JSONResponse({"detail": str(exc)}, status_code=502)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -82,6 +90,29 @@ async def index(request: Request):
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/config")
+async def read_config() -> dict[str, Any]:
+    config = load_portal_config()
+    return {
+        "configured": config is not None,
+        "portal_url": config.portal_url if config else "",
+        "portal_mac": config.portal_mac if config else "",
+    }
+
+
+@app.put("/api/config")
+async def write_config(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        config = PortalConfig(
+            portal_url=str(payload.get("portal_url", "")),
+            portal_mac=str(payload.get("portal_mac", "")),
+        )
+        save_portal_config(config)
+    except (ValidationError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"saved": True, "portal_url": config.portal_url, "portal_mac": config.portal_mac}
 
 
 @app.get("/api/status")
@@ -126,7 +157,7 @@ async def episodes(series_id: str, season: str | None = None, portal: StalkerCli
 
 
 @app.post("/api/play")
-async def play(payload: dict[str, Any], settings: Settings = Depends(get_settings), portal: StalkerClient = Depends(client)) -> dict[str, str]:
+async def play(payload: dict[str, Any], settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)) -> dict[str, str]:
     media_type = str(payload.get("type", ""))
     command = str(payload.get("cmd", ""))
     series = payload.get("series")
@@ -146,7 +177,7 @@ async def iter_response(response: httpx.Response, client_instance: httpx.AsyncCl
 
 
 @app.get("/stream/{ticket}")
-async def stream(ticket: str, settings: Settings = Depends(get_settings), portal: StalkerClient = Depends(client)):
+async def stream(ticket: str, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
     url = read_ticket(ticket, settings)
     http = httpx.AsyncClient(timeout=None, verify=settings.verify_tls, follow_redirects=True)
     try:
