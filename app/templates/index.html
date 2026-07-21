@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stalker Client</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.10/dist/hls.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Stalker Client</h1>
+      <span id="status">Verbinde …</span>
+    </div>
+    <input id="search" type="search" placeholder="Titel oder Sender suchen">
+  </header>
+
+  <main>
+    <nav id="tabs" aria-label="Medienbereiche">
+      <button data-type="itv" class="active">Live-TV</button>
+      <button data-type="vod">Filme</button>
+      <button data-type="series">Serien</button>
+    </nav>
+
+    <section class="layout">
+      <aside>
+        <h2>Kategorien</h2>
+        <div id="categories" class="category-list"></div>
+      </aside>
+
+      <section class="content">
+        <div id="message" class="message" hidden></div>
+        <div id="items" class="grid"></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="playerDialog">
+    <div class="dialog-head">
+      <div>
+        <h2 id="playerTitle">Wiedergabe</h2>
+        <p id="playerMeta"></p>
+      </div>
+      <button id="closePlayer" aria-label="Player schließen">×</button>
+    </div>
+    <video id="player" controls autoplay playsinline></video>
+    <div id="epg" class="epg"></div>
+  </dialog>
+
+  <dialog id="seriesDialog">
+    <div class="dialog-head">
+      <h2 id="seriesTitle">Episoden</h2>
+      <button id="closeSeries" aria-label="Episoden schließen">×</button>
+    </div>
+    <div id="episodes" class="episode-list"></div>
+  </dialog>
+</body>
+</html>
