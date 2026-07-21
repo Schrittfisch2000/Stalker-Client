@@ -18,16 +18,19 @@ function showMessage(text = '') {
 }
 
 function normalizeArray(value) {
-  if (Array.isArray(value)) return value;
-  if (value && Array.isArray(value.data)) return value.data;
-  if (value && typeof value.data === 'object' && value.data) return Object.values(value.data);
-  if (value && typeof value === 'object') return Object.values(value).filter((entry) => entry && typeof entry === 'object');
+  if (Array.isArray(value)) return value.flatMap((entry) => Array.isArray(entry) ? entry : [entry]);
+  if (value && Array.isArray(value.data)) return normalizeArray(value.data);
+  if (value && Array.isArray(value.js)) return normalizeArray(value.js);
+  if (value && typeof value.data === 'object' && value.data) return normalizeArray(Object.values(value.data));
+  if (value && typeof value.js === 'object' && value.js) return normalizeArray(Object.values(value.js));
+  if (value && typeof value === 'object') return Object.values(value).flatMap((entry) => Array.isArray(entry) ? entry : [entry]).filter((entry) => entry && typeof entry === 'object');
   return [];
 }
 
-function titleOf(item) { return item.name || item.title || item.o_name || item.ch_name || 'Ohne Titel'; }
+function titleOf(item) { return item.name || item.title || item.o_name || item.ch_name || item.episode_name || 'Ohne Titel'; }
 function imageOf(item) { return item.logo || item.screenshot_uri || item.cover || item.poster || ''; }
-function commandOf(item) { return item.cmd || item.command || item.stream_url || '';
+function commandOf(item) {
+  return item.cmd || item.command || item.stream_url || item.video_url || item.file || item.path || item.url || '';
 }
 function cleanId(value) { return String(value || '').split(':', 1)[0].trim(); }
 
@@ -110,14 +113,20 @@ async function playItem(item, series = null) {
   if (!cmd) return showMessage('Für diesen Eintrag wurde kein Wiedergabebefehl geliefert.');
   showMessage('Stream wird vorbereitet …');
   try {
-    const result = await api('/api/play', { method: 'POST', body: JSON.stringify({ type: state.type, cmd, series }) });
+    const result = await api('/api/play', {
+      method: 'POST',
+      body: JSON.stringify({ type: state.type, cmd, series, item })
+    });
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || 'Stream wird geladen …';
     $('playerDialog').showModal();
-    attachPlayer(result.url, result.stream_type || 'native');
+    attachPlayer(result.url, result.stream_type || 'hls');
     showMessage('');
     if (state.type === 'itv') loadEpg(item);
-  } catch (error) { showMessage(error.message); }
+  } catch (error) {
+    showMessage(error.message);
+    $('playerMeta').textContent = error.message;
+  }
 }
 
 function destroyPlayer() {
@@ -125,10 +134,12 @@ function destroyPlayer() {
   if (state.hls) { state.hls.destroy(); state.hls = null; }
   video.pause();
   video.removeAttribute('src');
+  video.onerror = null;
+  video.onplaying = null;
   video.load();
 }
 
-function attachPlayer(url, streamType = 'native') {
+function attachPlayer(url, streamType = 'hls') {
   const video = $('player');
   destroyPlayer();
   const absoluteUrl = new URL(url, window.location.href).href;
@@ -142,17 +153,36 @@ function attachPlayer(url, streamType = 'native') {
   };
 
   if (streamType === 'hls' && window.Hls && Hls.isSupported()) {
-    state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+    state.hls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: false,
+      liveSyncDurationCount: 3,
+      maxBufferLength: 30,
+      manifestLoadingTimeOut: 25000,
+      levelLoadingTimeOut: 25000,
+      fragLoadingTimeOut: 30000
+    });
     state.hls.loadSource(absoluteUrl);
     state.hls.attachMedia(video);
     state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; }));
-    state.hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) $('playerMeta').textContent = `Playerfehler: ${data.details}`; });
+    state.hls.on(Hls.Events.ERROR, (_, data) => {
+      if (!data.fatal) return;
+      $('playerMeta').textContent = `Playerfehler: ${data.details}`;
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) state.hls.startLoad();
+      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) state.hls.recoverMediaError();
+      else destroyPlayer();
+    });
     return;
   }
 
-  video.src = absoluteUrl;
-  video.load();
-  video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = absoluteUrl;
+    video.load();
+    video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+    return;
+  }
+
+  $('playerMeta').textContent = 'HLS-Wiedergabe wird von diesem Browser nicht unterstützt.';
 }
 
 async function loadEpg(item) {
@@ -183,8 +213,15 @@ async function openSeries(item) {
     $('episodes').innerHTML = '';
     for (const episode of values) {
       const button = document.createElement('button');
-      button.textContent = titleOf(episode);
-      button.onclick = () => { $('seriesDialog').close(); playItem(episode, episode.series || episode.series_number || null); };
+      const season = episode.season || episode.season_number || episode.season_id || '';
+      const number = episode.episode || episode.episode_number || episode.series_number || '';
+      const prefix = [season ? `S${season}` : '', number ? `E${number}` : ''].filter(Boolean).join(' ');
+      button.textContent = `${prefix}${prefix ? ' – ' : ''}${titleOf(episode)}`;
+      button.onclick = () => {
+        $('seriesDialog').close();
+        const seriesValue = episode.series || episode.series_number || episode.episode_id || null;
+        playItem(episode, seriesValue);
+      };
       $('episodes').append(button);
     }
     if (!values.length) $('episodes').textContent = 'Keine Episoden gefunden.';
@@ -209,10 +246,13 @@ $('settingsForm').addEventListener('submit', async (event) => {
 
 for (const button of document.querySelectorAll('#tabs button')) {
   button.onclick = async () => {
-    state.type = button.dataset.type; state.category = '*';
+    state.type = button.dataset.type;
+    state.category = '*';
     $('sectionTitle').textContent = sectionTitles[state.type];
+    showMessage('');
     document.querySelectorAll('#tabs button').forEach((node) => node.classList.toggle('active', node === button));
-    await loadCategories(); await loadContent();
+    await loadCategories();
+    await loadContent();
   };
 }
 
