@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import tempfile
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 CONFIG_FILE = Path(os.getenv("CONFIG_FILE", "/config/portal-settings.json"))
+SECRET_FILE = Path(os.getenv("SECRET_FILE", "/config/.stalker-secret"))
 
 
 class PortalConfig(BaseModel):
@@ -34,8 +36,8 @@ class PortalConfig(BaseModel):
         if len(parts) != 6 or any(len(part) != 2 for part in parts):
             raise ValueError("MAC-Adresse muss das Format 00:1A:79:XX:XX:XX verwenden")
         try:
-            if any(int(part, 16) < 0 for part in parts):
-                raise ValueError
+            for part in parts:
+                int(part, 16)
         except ValueError as exc:
             raise ValueError("MAC-Adresse enthält ungültige Zeichen") from exc
         return value
@@ -46,6 +48,37 @@ class Settings(PortalConfig):
     port: int = 8080
     verify_tls: bool = True
     request_timeout: float = 20.0
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def load_or_create_app_secret() -> str:
+    configured = os.getenv("APP_SECRET", "").strip()
+    if len(configured) >= 16:
+        return configured
+
+    if SECRET_FILE.exists():
+        try:
+            stored = SECRET_FILE.read_text(encoding="utf-8").strip()
+            if len(stored) >= 16:
+                return stored
+        except OSError:
+            pass
+
+    generated = secrets.token_urlsafe(48)
+    _atomic_write(SECRET_FILE, generated + "\n")
+    return generated
 
 
 def load_portal_config() -> PortalConfig | None:
@@ -63,17 +96,7 @@ def load_portal_config() -> PortalConfig | None:
 
 
 def save_portal_config(config: PortalConfig) -> None:
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix="portal-settings-", suffix=".json", dir=CONFIG_FILE.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(config.model_dump_json(indent=2))
-            handle.write("\n")
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, CONFIG_FILE)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    _atomic_write(CONFIG_FILE, config.model_dump_json(indent=2) + "\n")
 
 
 def get_settings() -> Settings:
@@ -82,7 +105,7 @@ def get_settings() -> Settings:
         raise RuntimeError("Portal ist noch nicht konfiguriert")
     return Settings(
         **portal.model_dump(),
-        app_secret=os.getenv("APP_SECRET", ""),
+        app_secret=load_or_create_app_secret(),
         port=int(os.getenv("PORT", "8080")),
         verify_tls=os.getenv("VERIFY_TLS", "true").lower() not in {"0", "false", "no"},
         request_timeout=float(os.getenv("REQUEST_TIMEOUT", "20")),

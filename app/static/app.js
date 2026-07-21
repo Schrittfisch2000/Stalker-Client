@@ -1,5 +1,6 @@
 const state = { type: 'itv', category: '*', items: [], hls: null, configured: false };
 const $ = (id) => document.getElementById(id);
+const sectionTitles = { itv: 'Live-TV', vod: 'Filme', series: 'Serien' };
 
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
@@ -38,16 +39,16 @@ async function loadConfig(openWhenMissing = false) {
 async function loadStatus() {
   if (!state.configured) {
     $('status').textContent = 'Zugangsdaten fehlen';
-    $('status').className = 'error';
+    $('status').className = 'status-badge error';
     return;
   }
   try {
     await api('/api/status');
     $('status').textContent = 'Portal verbunden';
-    $('status').className = 'ok';
+    $('status').className = 'status-badge ok';
   } catch (error) {
     $('status').textContent = `Nicht verbunden: ${error.message}`;
-    $('status').className = 'error';
+    $('status').className = 'status-badge error';
   }
 }
 
@@ -182,6 +183,7 @@ $('settingsForm').addEventListener('submit', async (event) => {
 for (const button of document.querySelectorAll('#tabs button')) {
   button.onclick = async () => {
     state.type = button.dataset.type; state.category = '*';
+    $('sectionTitle').textContent = sectionTitles[state.type];
     document.querySelectorAll('#tabs button').forEach((node) => node.classList.toggle('active', node === button));
     await loadCategories(); await loadContent();
   };
@@ -190,6 +192,7 @@ for (const button of document.querySelectorAll('#tabs button')) {
 let searchTimer;
 $('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadContent, 350); });
 $('openSettings').onclick = () => $('settingsDialog').showModal();
+$('heroSettings').onclick = () => $('settingsDialog').showModal();
 $('closeSettings').onclick = () => $('settingsDialog').close();
 $('closePlayer').onclick = () => $('playerDialog').close();
 $('closeSeries').onclick = () => $('seriesDialog').close();

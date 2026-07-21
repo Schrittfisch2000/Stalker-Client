@@ -9,31 +9,47 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-  <header>
-    <div>
-      <h1>Stalker Client</h1>
-      <span id="status">Nicht konfiguriert</span>
-    </div>
-    <div class="header-actions">
-      <input id="search" type="search" placeholder="Titel oder Sender suchen">
-      <button id="openSettings" class="secondary">Zugangsdaten</button>
-    </div>
-  </header>
-
-  <main>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Stalker Client Startseite"><span>STALKER</span> CLIENT</a>
     <nav id="tabs" aria-label="Medienbereiche">
       <button data-type="itv" class="active">Live-TV</button>
       <button data-type="vod">Filme</button>
       <button data-type="series">Serien</button>
     </nav>
+    <div class="header-actions">
+      <input id="search" type="search" placeholder="Titel oder Sender suchen" aria-label="Inhalte suchen">
+      <span id="status" class="status-badge">Nicht konfiguriert</span>
+      <button id="openSettings" class="icon-button" title="Zugangsdaten" aria-label="Zugangsdaten öffnen">⚙</button>
+    </div>
+  </header>
 
-    <section class="layout">
+  <main>
+    <section class="hero">
+      <div class="hero-shade"></div>
+      <div class="hero-content">
+        <p class="eyebrow">DEIN PORTAL. DEINE INHALTE.</p>
+        <h1>Stalker Client</h1>
+        <p>Live-TV, Filme und Serien aus deinem kompatiblen Stalker-/MAG-Portal – direkt in einer modernen Streaming-Oberfläche.</p>
+        <div class="hero-actions">
+          <button id="heroSettings" class="primary">Jetzt verbinden</button>
+          <span>Portal-Daten bleiben lokal auf deinem System.</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="catalog-shell">
       <aside>
         <h2>Kategorien</h2>
         <div id="categories" class="category-list"></div>
       </aside>
 
       <section class="content">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">ENTDECKEN</p>
+            <h2 id="sectionTitle">Live-TV</h2>
+          </div>
+        </div>
         <div id="message" class="message" hidden></div>
         <div id="items" class="grid"></div>
       </section>
@@ -44,6 +60,7 @@
     <form id="settingsForm" class="settings-form">
       <div class="dialog-head">
         <div>
+          <p class="eyebrow">VERBINDUNG</p>
           <h2>Portal-Zugangsdaten</h2>
           <p>Die Daten werden lokal in <code>portal-settings.json</code> gespeichert.</p>
         </div>
@@ -62,7 +79,7 @@
     </form>
   </dialog>
 
-  <dialog id="playerDialog">
+  <dialog id="playerDialog" class="player-dialog">
     <div class="dialog-head">
       <div>
         <h2 id="playerTitle">Wiedergabe</h2>

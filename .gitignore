@@ -1,5 +1,8 @@
 .env
 portal-settings.json
+.stalker-secret
+stalker-client.log
+stalker-client.log.*
 .venv/
 __pycache__/
 *.py[cod]
