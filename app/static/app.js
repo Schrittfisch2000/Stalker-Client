@@ -1,4 +1,4 @@
-const state = { type: 'itv', category: '*', items: [], hls: null };
+const state = { type: 'itv', category: '*', items: [], hls: null, configured: false };
 const $ = (id) => document.getElementById(id);
 
 async function api(path, options = {}) {
@@ -22,19 +22,25 @@ function normalizeArray(value) {
   return [];
 }
 
-function titleOf(item) {
-  return item.name || item.title || item.o_name || item.ch_name || 'Ohne Titel';
-}
+function titleOf(item) { return item.name || item.title || item.o_name || item.ch_name || 'Ohne Titel'; }
+function imageOf(item) { return item.logo || item.screenshot_uri || item.cover || item.poster || ''; }
+function commandOf(item) { return item.cmd || item.command || item.stream_url || ''; }
 
-function imageOf(item) {
-  return item.logo || item.screenshot_uri || item.cover || item.poster || '';
-}
-
-function commandOf(item) {
-  return item.cmd || item.command || item.stream_url || '';
+async function loadConfig(openWhenMissing = false) {
+  const config = await api('/api/config');
+  state.configured = config.configured;
+  $('portalUrl').value = config.portal_url || '';
+  $('portalMac').value = config.portal_mac || '';
+  if (!config.configured && openWhenMissing) $('settingsDialog').showModal();
+  return config.configured;
 }
 
 async function loadStatus() {
+  if (!state.configured) {
+    $('status').textContent = 'Zugangsdaten fehlen';
+    $('status').className = 'error';
+    return;
+  }
   try {
     await api('/api/status');
     $('status').textContent = 'Portal verbunden';
@@ -46,6 +52,7 @@ async function loadStatus() {
 }
 
 async function loadCategories() {
+  if (!state.configured) return;
   $('categories').innerHTML = '<span class="muted">Lade …</span>';
   try {
     const values = normalizeArray(await api(`/api/categories/${state.type}`));
@@ -56,11 +63,7 @@ async function loadCategories() {
       const button = document.createElement('button');
       button.textContent = category.title || category.name || 'Kategorie';
       button.className = id === state.category ? 'active' : '';
-      button.onclick = async () => {
-        state.category = id;
-        await loadCategories();
-        await loadContent();
-      };
+      button.onclick = async () => { state.category = id; await loadCategories(); await loadContent(); };
       $('categories').append(button);
     }
   } catch (error) {
@@ -72,9 +75,7 @@ function createCard(item) {
   const card = document.createElement('article');
   card.className = 'card';
   const image = imageOf(item);
-  const imageNode = image
-    ? `<img src="${image}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-    : '<div class="placeholder">▶</div>';
+  const imageNode = image ? `<img src="${image}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<div class="placeholder">▶</div>';
   const description = item.description || item.plot || item.descr || item.year || '';
   card.innerHTML = `${imageNode}<div class="card-body"><h3></h3><p></p></div>`;
   card.querySelector('h3').textContent = titleOf(item);
@@ -84,6 +85,10 @@ function createCard(item) {
 }
 
 async function loadContent() {
+  if (!state.configured) {
+    showMessage('Bitte zuerst Portal-URL und MAC-Adresse eintragen.');
+    return;
+  }
   showMessage('Lade Inhalte …');
   $('items').innerHTML = '';
   const search = encodeURIComponent($('search').value.trim());
@@ -92,9 +97,7 @@ async function loadContent() {
     state.items = values;
     showMessage(values.length ? '' : 'Keine Inhalte gefunden.');
     for (const item of values) $('items').append(createCard(item));
-  } catch (error) {
-    showMessage(error.message);
-  }
+  } catch (error) { showMessage(error.message); }
 }
 
 async function playItem(item, series = null) {
@@ -102,39 +105,26 @@ async function playItem(item, series = null) {
   if (!cmd) return showMessage('Für diesen Eintrag wurde kein Wiedergabebefehl geliefert.');
   showMessage('Stream wird vorbereitet …');
   try {
-    const result = await api('/api/play', {
-      method: 'POST',
-      body: JSON.stringify({ type: state.type, cmd, series })
-    });
+    const result = await api('/api/play', { method: 'POST', body: JSON.stringify({ type: state.type, cmd, series }) });
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || '';
     $('playerDialog').showModal();
     attachPlayer(result.url);
     showMessage('');
     if (state.type === 'itv') loadEpg(item);
-  } catch (error) {
-    showMessage(error.message);
-  }
+  } catch (error) { showMessage(error.message); }
 }
 
 function attachPlayer(url) {
   const video = $('player');
   if (state.hls) { state.hls.destroy(); state.hls = null; }
-  video.pause();
-  video.removeAttribute('src');
-  video.load();
+  video.pause(); video.removeAttribute('src'); video.load();
   if (window.Hls && Hls.isSupported()) {
     state.hls = new Hls({ enableWorker: true, lowLatencyMode: true });
-    state.hls.loadSource(url);
-    state.hls.attachMedia(video);
+    state.hls.loadSource(url); state.hls.attachMedia(video);
     state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
-    state.hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) $('playerMeta').textContent = `Playerfehler: ${data.details}`;
-    });
-  } else {
-    video.src = url;
-    video.play().catch(() => {});
-  }
+    state.hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) $('playerMeta').textContent = `Playerfehler: ${data.details}`; });
+  } else { video.src = url; video.play().catch(() => {}); }
 }
 
 async function loadEpg(item) {
@@ -146,7 +136,7 @@ async function loadEpg(item) {
     for (const entry of values) {
       const row = document.createElement('div');
       const start = entry.time || entry.start_timestamp || entry.start || '';
-      row.innerHTML = `<strong></strong><span></span>`;
+      row.innerHTML = '<strong></strong><span></span>';
       row.querySelector('strong').textContent = `${start} ${entry.name || entry.title || ''}`.trim();
       row.querySelector('span').textContent = entry.descr || entry.description || '';
       $('epg').append(row);
@@ -166,40 +156,48 @@ async function openSeries(item) {
     for (const episode of values) {
       const button = document.createElement('button');
       button.textContent = titleOf(episode);
-      button.onclick = () => {
-        $('seriesDialog').close();
-        playItem(episode, episode.series || episode.series_number || null);
-      };
+      button.onclick = () => { $('seriesDialog').close(); playItem(episode, episode.series || episode.series_number || null); };
       $('episodes').append(button);
     }
     if (!values.length) $('episodes').textContent = 'Keine Episoden gefunden.';
-  } catch (error) {
-    $('episodes').textContent = error.message;
-  }
+  } catch (error) { $('episodes').textContent = error.message; }
 }
+
+$('settingsForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('settingsError').textContent = '';
+  try {
+    await api('/api/config', {
+      method: 'PUT',
+      body: JSON.stringify({ portal_url: $('portalUrl').value, portal_mac: $('portalMac').value })
+    });
+    state.configured = true;
+    $('settingsDialog').close();
+    await loadStatus();
+    await loadCategories();
+    await loadContent();
+  } catch (error) { $('settingsError').textContent = error.message; }
+});
 
 for (const button of document.querySelectorAll('#tabs button')) {
   button.onclick = async () => {
-    state.type = button.dataset.type;
-    state.category = '*';
+    state.type = button.dataset.type; state.category = '*';
     document.querySelectorAll('#tabs button').forEach((node) => node.classList.toggle('active', node === button));
-    await loadCategories();
-    await loadContent();
+    await loadCategories(); await loadContent();
   };
 }
 
 let searchTimer;
-$('search').addEventListener('input', () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(loadContent, 350);
-});
+$('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(loadContent, 350); });
+$('openSettings').onclick = () => $('settingsDialog').showModal();
+$('closeSettings').onclick = () => $('settingsDialog').close();
 $('closePlayer').onclick = () => $('playerDialog').close();
 $('closeSeries').onclick = () => $('seriesDialog').close();
-$('playerDialog').addEventListener('close', () => {
-  $('player').pause();
-  if (state.hls) { state.hls.destroy(); state.hls = null; }
-});
+$('playerDialog').addEventListener('close', () => { $('player').pause(); if (state.hls) { state.hls.destroy(); state.hls = null; } });
 
-loadStatus();
-loadCategories();
-loadContent();
+(async () => {
+  await loadConfig(true);
+  await loadStatus();
+  await loadCategories();
+  await loadContent();
+})();

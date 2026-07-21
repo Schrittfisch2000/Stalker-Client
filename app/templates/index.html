@@ -12,9 +12,12 @@
   <header>
     <div>
       <h1>Stalker Client</h1>
-      <span id="status">Verbinde …</span>
+      <span id="status">Nicht konfiguriert</span>
     </div>
-    <input id="search" type="search" placeholder="Titel oder Sender suchen">
+    <div class="header-actions">
+      <input id="search" type="search" placeholder="Titel oder Sender suchen">
+      <button id="openSettings" class="secondary">Zugangsdaten</button>
+    </div>
   </header>
 
   <main>
@@ -36,6 +39,28 @@
       </section>
     </section>
   </main>
+
+  <dialog id="settingsDialog">
+    <form id="settingsForm" class="settings-form">
+      <div class="dialog-head">
+        <div>
+          <h2>Portal-Zugangsdaten</h2>
+          <p>Die Daten werden lokal in <code>portal-settings.json</code> gespeichert.</p>
+        </div>
+        <button id="closeSettings" type="button" aria-label="Einstellungen schließen">×</button>
+      </div>
+      <label>
+        Portal-URL
+        <input id="portalUrl" name="portal_url" type="url" placeholder="http://portal.example/stalker_portal/c/" required>
+      </label>
+      <label>
+        MAC-Adresse
+        <input id="portalMac" name="portal_mac" type="text" placeholder="00:1A:79:00:00:00" pattern="[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}" required>
+      </label>
+      <div id="settingsError" class="error"></div>
+      <button type="submit" class="primary">Speichern und verbinden</button>
+    </form>
+  </dialog>
 
   <dialog id="playerDialog">
     <div class="dialog-head">
