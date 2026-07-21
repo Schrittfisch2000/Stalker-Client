@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -23,7 +24,7 @@ from .stalker import PortalError, StalkerClient
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = configure_logging()
-app = FastAPI(title="Stalker Client", version="0.3.1")
+app = FastAPI(title="Stalker Client", version="0.4.0")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -117,9 +118,7 @@ def detect_stream_type(url: str, media_type: str) -> str:
     path = urlparse(url).path.lower()
     if path.endswith(".m3u8") or "m3u8" in url.lower():
         return "hls"
-    if path.endswith((".ts", ".mpegts", ".m2ts")):
-        return "mpegts"
-    return "mpegts" if media_type == "itv" else "auto"
+    return "transcode" if media_type in {"itv", "vod", "series"} else "native"
 
 
 def rewrite_hls_line(line: str, source_url: str, settings: Settings) -> str:
@@ -214,7 +213,8 @@ async def epg(
 
 @app.get("/api/episodes/{series_id}")
 async def episodes(series_id: str, season: str | None = None, portal: StalkerClient = Depends(client)) -> Any:
-    return unwrap_listing(await portal.episodes(series_id, season))
+    clean_id = series_id.split(":", 1)[0].strip()
+    return unwrap_listing(await portal.episodes(clean_id, season))
 
 
 @app.post("/api/play")
@@ -226,8 +226,10 @@ async def play(payload: dict[str, Any], settings: Settings = Depends(settings_de
         raise HTTPException(status_code=400, detail="type and cmd are required")
     url = await portal.create_link(media_type, command, str(series) if series is not None else None)
     stream_type = detect_stream_type(url, media_type)
+    ticket = create_ticket(url, settings)
+    playback_url = f"/stream/{ticket}" if stream_type == "hls" else f"/transcode/{ticket}"
     logger.info("Wiedergabe vorbereitet: Typ=%s, Format=%s", media_type, stream_type)
-    return {"url": f"/stream/{create_ticket(url, settings)}", "stream_type": stream_type}
+    return {"url": playback_url, "stream_type": stream_type}
 
 
 async def iter_response(response: httpx.Response, client_instance: httpx.AsyncClient) -> AsyncIterator[bytes]:
@@ -237,6 +239,63 @@ async def iter_response(response: httpx.Response, client_instance: httpx.AsyncCl
     finally:
         await response.aclose()
         await client_instance.aclose()
+
+
+async def iter_ffmpeg(process: asyncio.subprocess.Process) -> AsyncIterator[bytes]:
+    stderr_task = asyncio.create_task(process.stderr.read()) if process.stderr else None
+    try:
+        if process.stdout is None:
+            return
+        while True:
+            chunk = await process.stdout.read(64 * 1024)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        if process.returncode is None:
+            process.terminate()
+        await process.wait()
+        stderr = await stderr_task if stderr_task else b""
+        if process.returncode not in (0, -15) and stderr:
+            logger.error("FFmpeg beendet: %s", stderr.decode("utf-8", errors="replace")[-1000:])
+
+
+@app.get("/transcode/{ticket}")
+async def transcode(ticket: str, settings: Settings = Depends(settings_dependency), portal: StalkerClient = Depends(client)):
+    url = read_ticket(ticket, settings)
+    headers = portal.portal_headers_for_stream()
+    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
+    ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-headers", ffmpeg_headers,
+        "-i", url,
+        "-map", "0:v:0?",
+        "-map", "0:a:0?",
+        "-sn",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-f", "mp4",
+        "pipe:1",
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        logger.exception("FFmpeg konnte nicht gestartet werden")
+        raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
+    logger.info("FFmpeg-Stream gestartet")
+    return StreamingResponse(iter_ffmpeg(process), media_type="video/mp4", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/stream/{ticket}")
