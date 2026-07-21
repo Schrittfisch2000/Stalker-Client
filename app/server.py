@@ -5,9 +5,10 @@ from fastapi.responses import JSONResponse
 
 from .access import category_allowed, router as access_router
 from .auth import current_user, router as auth_router
+from .config import PortalConfig, reset_portal_override, set_portal_override
 from .main import app
 from .media_state import router as media_state_router
-from .portals import router as portals_router
+from .portals import router as portals_router, selected_portal
 from .storage import ensure_standard_files
 
 ensure_standard_files()
@@ -45,4 +46,15 @@ async def benutzer_schutz(request: Request, call_next):
         if media_type in {"itv", "vod", "series"} and not category_allowed(user["username"], user["role"], media_type, category):
             return JSONResponse({"detail": "Diese Kategorie ist für deinen Benutzer nicht freigegeben"}, status_code=403)
 
-    return await call_next(request)
+    portal = selected_portal(request, user["username"], user["role"])
+    override = None
+    if portal:
+        override = PortalConfig(
+            portal_url=str(portal.get("portal_url", "")),
+            portal_mac=str(portal.get("portal_mac", "")),
+        )
+    token = set_portal_override(override)
+    try:
+        return await call_next(request)
+    finally:
+        reset_portal_override(token)
