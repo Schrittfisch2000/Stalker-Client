@@ -38,7 +38,12 @@ function imageOf(item) { return item.logo || item.screenshot_uri || item.cover |
 function commandOf(item) { return item.cmd || item.command || item.stream_url || item.video_url || item.file || item.path || item.url || ''; }
 function cleanId(value) { return String(value || '').split(':', 1)[0].trim(); }
 function validCommand(value) { return Boolean(value && !['', '.', 'null', 'none'].includes(String(value).trim().toLowerCase())); }
-function seasonOf(item) { return cleanId(item.season_id || item.season || item.season_number || item.id); }
+function seasonOf(item) {
+  const explicit = cleanId(item.season_id || item.season || item.season_number);
+  if (explicit) return explicit;
+  const match = titleOf(item).match(/(?:season|staffel)\s*(\d+)/i);
+  return match ? match[1] : '';
+}
 function looksLikeSeason(item) {
   const title = titleOf(item).toLowerCase();
   return !validCommand(commandOf(item)) || /^season\s*\d+/.test(title) || /^staffel\s*\d+/.test(title) || item.is_season === 1 || item.is_season === '1';
@@ -129,18 +134,52 @@ async function loadContent() {
   }
 }
 
+function renderMediaInfo(item, mediaType) {
+  const container = $('epg');
+  container.textContent = '';
+  if (mediaType === 'itv') return;
+
+  const fields = [
+    ['Beschreibung', item.description || item.plot || item.descr],
+    ['Jahr', item.year],
+    ['Genre', item.genre || item.genres || item.category_name],
+    ['Laufzeit', item.time || item.duration || item.length],
+    ['Regie', item.director],
+    ['Besetzung', item.actors || item.cast],
+    ['Bewertung', item.rating || item.rating_imdb || item.imdb_rating],
+  ].filter(([, value]) => value !== undefined && value !== null && String(value).trim());
+
+  if (!fields.length) {
+    const row = document.createElement('div');
+    row.innerHTML = '<strong>Information</strong><span>Für diesen Titel wurden keine weiteren Angaben geliefert.</span>';
+    container.append(row);
+    return;
+  }
+
+  for (const [label, value] of fields) {
+    const row = document.createElement('div');
+    row.innerHTML = '<strong></strong><span></span>';
+    row.querySelector('strong').textContent = label;
+    row.querySelector('span').textContent = String(value);
+    container.append(row);
+  }
+}
+
 async function playItem(item, series = null) {
+  const mediaType = state.type;
   const cmd = commandOf(item);
   if (!validCommand(cmd)) return showMessage('Dieser Eintrag ist keine abspielbare Episode.');
   showMessage('Stream wird vorbereitet …');
+  $('epg').textContent = '';
   try {
-    const result = await api('/api/play', { method: 'POST', body: JSON.stringify({ type: state.type, cmd, series, item }) });
+    const result = await api('/api/play', { method: 'POST', body: JSON.stringify({ type: mediaType, cmd, series, item }) });
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || 'Stream wird geladen …';
     $('playerDialog').showModal();
     attachPlayer(result.url);
     showMessage('');
-    if (state.type === 'itv') loadEpg(item);
+    if (mediaType === 'itv') loadEpg(item);
+    else renderMediaInfo(item, mediaType);
   } catch (error) {
     showMessage(error.message);
     $('playerMeta').textContent = error.message;
@@ -155,6 +194,7 @@ function destroyPlayer() {
   video.onerror = null;
   video.onplaying = null;
   video.load();
+  $('epg').textContent = '';
 }
 
 function attachPlayer(url) {
@@ -217,7 +257,15 @@ async function renderSeriesLevel(seriesId, season = null, heading = '') {
       button.textContent = titleOf(entry);
       if (looksLikeSeason(entry)) {
         const seasonId = seasonOf(entry);
-        button.onclick = () => renderSeriesLevel(seriesId, seasonId, `${heading || 'Serie'} – ${titleOf(entry)}`);
+        if (!seasonId) {
+          button.disabled = true;
+          button.title = 'Das Portal hat keine Staffelnummer geliefert.';
+        } else if (season && String(seasonId) === String(season)) {
+          button.disabled = true;
+          button.title = 'Das Portal hat erneut dieselbe Staffel statt Episoden geliefert.';
+        } else {
+          button.onclick = () => renderSeriesLevel(seriesId, seasonId, `${heading || 'Serie'} – ${titleOf(entry)}`);
+        }
       } else {
         const seriesValue = entry.series || entry.series_number || entry.episode_id || null;
         button.onclick = () => { $('seriesDialog').close(); playItem(entry, seriesValue); };
