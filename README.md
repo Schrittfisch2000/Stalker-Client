@@ -63,7 +63,7 @@ Anschließend die Zugangsdaten in der Weboberfläche eintragen. Auch hierbei wir
 
 ## Sicherheit
 
-- `portal-settings.json`, `.stalker-secret` und `.env` niemals committen oder weitergeben.
+- `portal-settings.json` und `.stalker-secret` niemals committen oder weitergeben.
 - Den Dienst nicht ungeschützt ins öffentliche Internet stellen.
 - Wer Zugriff auf die Weboberfläche hat, kann die gespeicherte Portal-Konfiguration ändern.
 - Stream-Tickets sind zeitlich begrenzt und HMAC-signiert.
