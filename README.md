@@ -15,31 +15,49 @@ Dockerisierter Web-Client für kompatible Stalker-/MAG-Portale.
 
 ## Installation
 
+### Download
+
+Projekt als ZIP herunterladen:
+
+https://github.com/Schrittfisch2000/Stalker-Client/archive/refs/heads/main.zip
+
+Alternativ mit Git:
+
+```bash
+git clone https://github.com/Schrittfisch2000/Stalker-Client.git
+cd Stalker-Client
+```
+
 ### Windows
 
-Docker Desktop installieren, Repository herunterladen und im Projektordner in PowerShell ausführen:
+1. Docker Desktop installieren und starten.
+2. ZIP entpacken und PowerShell im Projektordner öffnen.
+3. Docker-Image erstellen und Container starten:
 
 ```powershell
-docker compose up --build -d
+docker compose build
+docker compose up -d
 ```
 
 ### Linux
 
-Docker Engine und das Docker-Compose-Plugin installieren, Repository klonen und im Projektordner ausführen:
+Docker Engine und Docker Compose installieren. Danach im Projektordner:
 
 ```bash
-docker compose up --build -d
+docker compose build
+docker compose up -d
 ```
 
 ### macOS
 
-Docker Desktop installieren, Repository herunterladen und im Projektordner im Terminal ausführen:
+Docker Desktop installieren und starten. Danach im Projektordner:
 
 ```bash
-docker compose up --build -d
+docker compose build
+docker compose up -d
 ```
 
-Danach öffnen:
+Weboberfläche öffnen:
 
 ```text
 http://localhost:8080
