@@ -69,6 +69,7 @@ def _entry(payload: dict[str, Any]) -> dict[str, Any]:
         "title": _text(payload, "title", "name", "episode_name", default="Ohne Titel"),
         "image": _text(payload, "image", "logo", "cover", "poster", "screenshot_uri"),
         "description": _text(payload, "description", "plot", "descr"),
+        "command": _text(payload, "command", "cmd", "stream_url", "video_url", "file", "path", "url"),
         "category": _text(payload, "category", "category_id", "genre_id"),
         "series_id": _text(payload, "series_id", "movie_id"),
         "season": _text(payload, "season", "season_id", "season_number"),
@@ -112,10 +113,7 @@ async def remove_favorite(media_type: str, item_id: str, request: Request) -> di
     values = data.get(user["username"], [])
     if not isinstance(values, list):
         values = []
-    data[user["username"]] = [
-        value for value in values
-        if not (value.get("type") == media_type and str(value.get("id")) == item_id)
-    ]
+    data[user["username"]] = [value for value in values if not (value.get("type") == media_type and str(value.get("id")) == item_id)]
     _write(FAVORITES_FILE, data)
     return {"favorite": False}
 
@@ -136,15 +134,8 @@ async def save_progress(payload: dict[str, Any], request: Request) -> dict[str, 
         duration = max(0.0, float(payload.get("duration", 0)))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Ungültiger Wiedergabefortschritt") from exc
-
     finished = bool(payload.get("finished")) or (duration > 0 and position / duration >= 0.9)
-    entry.update({
-        "position": 0 if finished else round(position, 2),
-        "duration": round(duration, 2),
-        "finished": finished,
-        "percent": 100 if finished else round((position / duration) * 100, 1) if duration > 0 else 0,
-    })
-
+    entry.update({"position": 0 if finished else round(position, 2), "duration": round(duration, 2), "finished": finished, "percent": 100 if finished else round((position / duration) * 100, 1) if duration > 0 else 0})
     data = _read(PROGRESS_FILE)
     values = data.get(user["username"], [])
     if not isinstance(values, list):
@@ -163,9 +154,6 @@ async def delete_progress(media_type: str, item_id: str, request: Request) -> di
     values = data.get(user["username"], [])
     if not isinstance(values, list):
         values = []
-    data[user["username"]] = [
-        value for value in values
-        if not (value.get("type") == media_type and str(value.get("id")) == item_id)
-    ]
+    data[user["username"]] = [value for value in values if not (value.get("type") == media_type and str(value.get("id")) == item_id)]
     _write(PROGRESS_FILE, data)
     return {"deleted": True}
