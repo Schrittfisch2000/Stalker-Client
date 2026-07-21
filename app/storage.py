@@ -26,6 +26,7 @@ def ensure_json_file(name: str, default: Any) -> Path:
 
 def ensure_standard_files() -> None:
     ensure_json_file("portal-einstellungen.json", {})
+    ensure_json_file("portal-zuweisungen.json", {})
     ensure_json_file("benutzer.json", [])
     ensure_json_file("benutzer-freigaben.json", {})
     ensure_json_file("wiedergabeverlauf.json", {})
