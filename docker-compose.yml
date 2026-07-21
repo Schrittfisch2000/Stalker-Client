@@ -1,15 +1,31 @@
+name: stalker-client-deutsch
+
 services:
   stalker-client:
-    build: .
-    container_name: stalker-client
+    image: stalker-client-deutsch:lokal
+    build:
+      context: .
+      labels:
+        de.stalker-client.beschreibung: "Deutscher Web-Client für Stalker- und MAG-Portale"
+        de.stalker-client.version: "lokal"
+    container_name: stalker-client-deutsch
+    hostname: stalker-client-deutsch
     restart: unless-stopped
     environment:
-      CONFIG_FILE: /config/portal-settings.json
-      SECRET_FILE: /config/.stalker-secret
+      TZ: Europe/Berlin
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      CONFIG_FILE: /konfiguration/portal-einstellungen.json
+      SECRET_FILE: /konfiguration/.stalker-geheimnis
+      LOG_FILE: /konfiguration/stalker-client.log
     volumes:
-      - ./:/config
+      - ./:/konfiguration
     ports:
       - "8080:8080"
+    labels:
+      de.stalker-client.name: "Stalker Client Deutsch"
+      de.stalker-client.beschreibung: "Live-TV, Filme und Serien in deutscher Oberfläche"
+      de.stalker-client.verwaltung: "docker compose"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s
