@@ -20,6 +20,7 @@ class StalkerClient:
     _channel_cache_lock = asyncio.Lock()
     _channel_cache_ttl = 90.0
     _adult_genre_ids: dict[str, set[str]] = {}
+    _max_pages = 200
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -138,6 +139,63 @@ class StalkerClient:
         return []
 
     @staticmethod
+    def _item_key(item: dict[str, Any]) -> str:
+        for key in ("id", "ch_id", "movie_id", "series_id", "episode_id", "cmd", "name", "title"):
+            value = item.get(key)
+            if value not in (None, ""):
+                return f"{key}:{value}"
+        return repr(sorted(item.items()))
+
+    @staticmethod
+    def _reported_last_page(value: Any) -> int | None:
+        if not isinstance(value, dict):
+            return None
+        for key in ("max_page_items", "max_page", "total_pages", "pages", "page_count"):
+            raw = value.get(key)
+            try:
+                number = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if number > 0:
+                return number
+        return None
+
+    async def _all_ordered_items(self, media_type: str, **params: Any) -> list[dict[str, Any]]:
+        collected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        previous_signature: tuple[str, ...] | None = None
+        reported_last_page: int | None = None
+
+        for page in range(1, self._max_pages + 1):
+            result = await self.call(media_type, "get_ordered_list", p=page, **params)
+            items = self._as_list(result)
+            if page == 1:
+                reported_last_page = self._reported_last_page(result)
+            if not items:
+                break
+
+            signature = tuple(self._item_key(item) for item in items)
+            if signature == previous_signature:
+                break
+            previous_signature = signature
+
+            added = 0
+            for item in items:
+                key = self._item_key(item)
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(item)
+                added += 1
+
+            if added == 0:
+                break
+            if reported_last_page is not None and page >= reported_last_page:
+                break
+
+        return collected
+
+    @staticmethod
     def _genre_values(item: dict[str, Any]) -> set[str]:
         values: set[str] = set()
         for key in ("tv_genre_id", "genre_id", "category_id", "genre", "category", "genres", "genre_ids"):
@@ -210,18 +268,33 @@ class StalkerClient:
         return categories
 
     async def _category_channels_from_portal(self, category: str) -> list[dict[str, Any]]:
-        attempts = [
-            ("get_ordered_list", {"genre": category, "category": category, "p": 1, "sortby": "number"}),
-            ("get_all_channels", {"genre": category, "category": category}),
-        ]
-        for action, params in attempts:
-            try:
-                result = self._as_list(await self.call("itv", action, show_adult="1", adult="1", **params))
-            except (PortalError, httpx.HTTPError):
-                continue
+        try:
+            result = await self._all_ordered_items(
+                "itv",
+                genre=category,
+                category=category,
+                sortby="number",
+                show_adult="1",
+                adult="1",
+            )
             if result:
                 return result
-        return []
+        except (PortalError, httpx.HTTPError):
+            pass
+
+        try:
+            return self._as_list(
+                await self.call(
+                    "itv",
+                    "get_all_channels",
+                    genre=category,
+                    category=category,
+                    show_adult="1",
+                    adult="1",
+                )
+            )
+        except (PortalError, httpx.HTTPError):
+            return []
 
     async def listing(self, media_type: str, category: str = "*", page: int = 1, search: str = "") -> Any:
         if media_type == "itv":
@@ -243,12 +316,11 @@ class StalkerClient:
                     if needle in str(item.get("name") or item.get("title") or item.get("ch_name") or "").casefold()
                 ]
             return channels
-        return await self.call(
+
+        return await self._all_ordered_items(
             media_type,
-            "get_ordered_list",
             genre=category,
             category=category,
-            p=page,
             sortby="added",
             hd="0",
             fav="0",
@@ -267,18 +339,31 @@ class StalkerClient:
         clean_id = str(series_id).split(":", 1)[0].strip()
         clean_season = str(season).split(":", 1)[0].strip() if season else None
         attempts = [
-            ("series", "get_ordered_list", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season, "episode_id": "*", "p": 1}),
-            ("series", "get_episodes", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season}),
-            ("vod", "get_ordered_list", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season, "p": 1}),
+            ("series", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season, "episode_id": "*"}),
+            ("vod", {"movie_id": clean_id, "series_id": clean_id, "season_id": clean_season}),
         ]
         errors: list[str] = []
-        for candidate_type, action, params in attempts:
+        for candidate_type, params in attempts:
             try:
-                result = await self.call(candidate_type, action, **params)
-                if self._as_list(result):
+                result = await self._all_ordered_items(candidate_type, **params)
+                if result:
                     return result
             except (PortalError, httpx.HTTPError) as exc:
                 errors.append(str(exc))
+
+        try:
+            result = await self.call(
+                "series",
+                "get_episodes",
+                movie_id=clean_id,
+                series_id=clean_id,
+                season_id=clean_season,
+            )
+            if self._as_list(result):
+                return result
+        except (PortalError, httpx.HTTPError) as exc:
+            errors.append(str(exc))
+
         raise PortalError("Portal did not return episodes" + (f": {errors[-1]}" if errors else ""))
 
     @staticmethod
