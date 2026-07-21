@@ -1,9 +1,15 @@
-const state = { type: 'itv', category: '*', items: [], hls: null, configured: false };
+const state = { type: 'itv', category: '*', items: [], hls: null, configured: false, contentController: null };
 const $ = (id) => document.getElementById(id);
 const sectionTitles = { itv: 'Live-TV', vod: 'Filme', series: 'Serien' };
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+  } catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw new Error('Verbindung zum Client unterbrochen. Bitte erneut versuchen.');
+  }
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     try { detail = (await response.json()).detail || detail; } catch (_) {}
@@ -77,7 +83,11 @@ async function loadCategories() {
       const button = document.createElement('button');
       button.textContent = category.title || category.name || category.genre_name || category.category_name || `Kategorie ${id}`;
       button.className = id === state.category ? 'active' : '';
-      button.onclick = async () => { state.category = id; await loadCategories(); await loadContent(); };
+      button.onclick = async () => {
+        state.category = id;
+        document.querySelectorAll('#categories button').forEach((node) => node.classList.toggle('active', node === button));
+        await loadContent();
+      };
       $('categories').append(button);
     }
   } catch (error) {
@@ -100,15 +110,23 @@ function createCard(item) {
 
 async function loadContent() {
   if (!state.configured) return showMessage('Bitte zuerst Portal-URL und MAC-Adresse eintragen.');
+  if (state.contentController) state.contentController.abort();
+  const controller = new AbortController();
+  state.contentController = controller;
   showMessage('Lade Inhalte …');
   $('items').innerHTML = '';
   const search = encodeURIComponent($('search').value.trim());
   try {
-    const values = normalizeArray(await api(`/api/content/${state.type}?category=${encodeURIComponent(state.category)}&search=${search}`));
+    const values = normalizeArray(await api(`/api/content/${state.type}?category=${encodeURIComponent(state.category)}&search=${search}`, { signal: controller.signal }));
+    if (state.contentController !== controller) return;
     state.items = values;
     showMessage(values.length ? '' : 'Keine Inhalte gefunden.');
     for (const item of values) $('items').append(createCard(item));
-  } catch (error) { showMessage(error.message); }
+  } catch (error) {
+    if (error.name !== 'AbortError') showMessage(error.message);
+  } finally {
+    if (state.contentController === controller) state.contentController = null;
+  }
 }
 
 async function playItem(item, series = null) {
