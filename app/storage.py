@@ -29,3 +29,5 @@ def ensure_standard_files() -> None:
     ensure_json_file("benutzer.json", [])
     ensure_json_file("benutzer-freigaben.json", {})
     ensure_json_file("wiedergabeverlauf.json", {})
+    ensure_json_file("favoriten.json", {})
+    ensure_json_file("fortschritt.json", {})
