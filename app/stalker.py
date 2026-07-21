@@ -161,7 +161,9 @@ class StalkerClient:
         return await self.call("itv", "get_epg_info", period=period)
 
     async def episodes(self, series_id: str, season: str | None = None) -> Any:
-        return await self.call("series", "get_episodes", movie_id=series_id, season_id=season)
+        clean_id = str(series_id).split(":", 1)[0].strip()
+        clean_season = str(season).split(":", 1)[0].strip() if season else None
+        return await self.call("series", "get_episodes", movie_id=clean_id, season_id=clean_season)
 
     async def create_link(self, media_type: str, command: str, series: str | None = None) -> str:
         result = await self.call(
