@@ -29,10 +29,14 @@ function normalizeArray(value) {
 
 function titleOf(item) { return item.name || item.title || item.o_name || item.ch_name || item.episode_name || 'Ohne Titel'; }
 function imageOf(item) { return item.logo || item.screenshot_uri || item.cover || item.poster || ''; }
-function commandOf(item) {
-  return item.cmd || item.command || item.stream_url || item.video_url || item.file || item.path || item.url || '';
-}
+function commandOf(item) { return item.cmd || item.command || item.stream_url || item.video_url || item.file || item.path || item.url || ''; }
 function cleanId(value) { return String(value || '').split(':', 1)[0].trim(); }
+function validCommand(value) { return Boolean(value && !['', '.', 'null', 'none'].includes(String(value).trim().toLowerCase())); }
+function seasonOf(item) { return cleanId(item.season_id || item.season || item.season_number || item.id); }
+function looksLikeSeason(item) {
+  const title = titleOf(item).toLowerCase();
+  return !validCommand(commandOf(item)) || /^season\s*\d+/.test(title) || /^staffel\s*\d+/.test(title) || item.is_season === 1 || item.is_season === '1';
+}
 
 async function loadConfig(openWhenMissing = false) {
   const config = await api('/api/config');
@@ -40,7 +44,6 @@ async function loadConfig(openWhenMissing = false) {
   $('portalUrl').value = config.portal_url || '';
   $('portalMac').value = config.portal_mac || '';
   if (!config.configured && openWhenMissing) $('settingsDialog').showModal();
-  return config.configured;
 }
 
 async function loadStatus() {
@@ -65,11 +68,14 @@ async function loadCategories() {
   try {
     const values = normalizeArray(await api(`/api/categories/${state.type}`));
     const all = [{ id: '*', title: 'Alle' }, ...values];
+    const seen = new Set();
     $('categories').innerHTML = '';
     for (const category of all) {
       const id = String(category.id ?? category.genre_id ?? category.category_id ?? category.tv_genre_id ?? '*');
+      if (seen.has(id)) continue;
+      seen.add(id);
       const button = document.createElement('button');
-      button.textContent = category.title || category.name || category.genre_name || `Kategorie ${id}`;
+      button.textContent = category.title || category.name || category.genre_name || category.category_name || `Kategorie ${id}`;
       button.className = id === state.category ? 'active' : '';
       button.onclick = async () => { state.category = id; await loadCategories(); await loadContent(); };
       $('categories').append(button);
@@ -93,10 +99,7 @@ function createCard(item) {
 }
 
 async function loadContent() {
-  if (!state.configured) {
-    showMessage('Bitte zuerst Portal-URL und MAC-Adresse eintragen.');
-    return;
-  }
+  if (!state.configured) return showMessage('Bitte zuerst Portal-URL und MAC-Adresse eintragen.');
   showMessage('Lade Inhalte …');
   $('items').innerHTML = '';
   const search = encodeURIComponent($('search').value.trim());
@@ -110,17 +113,14 @@ async function loadContent() {
 
 async function playItem(item, series = null) {
   const cmd = commandOf(item);
-  if (!cmd) return showMessage('Für diesen Eintrag wurde kein Wiedergabebefehl geliefert.');
+  if (!validCommand(cmd)) return showMessage('Dieser Eintrag ist keine abspielbare Episode.');
   showMessage('Stream wird vorbereitet …');
   try {
-    const result = await api('/api/play', {
-      method: 'POST',
-      body: JSON.stringify({ type: state.type, cmd, series, item })
-    });
+    const result = await api('/api/play', { method: 'POST', body: JSON.stringify({ type: state.type, cmd, series, item }) });
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || 'Stream wird geladen …';
     $('playerDialog').showModal();
-    attachPlayer(result.url, result.stream_type || 'hls');
+    attachPlayer(result.url);
     showMessage('');
     if (state.type === 'itv') loadEpg(item);
   } catch (error) {
@@ -139,29 +139,18 @@ function destroyPlayer() {
   video.load();
 }
 
-function attachPlayer(url, streamType = 'hls') {
+function attachPlayer(url) {
   const video = $('player');
   destroyPlayer();
   const absoluteUrl = new URL(url, window.location.href).href;
-
   video.onerror = () => {
-    const mediaError = video.error;
-    $('playerMeta').textContent = mediaError ? `Playerfehler ${mediaError.code}: ${mediaError.message || 'Wiedergabe nicht möglich'}` : 'Playerfehler: Wiedergabe nicht möglich';
+    const error = video.error;
+    $('playerMeta').textContent = error ? `Playerfehler ${error.code}: ${error.message || 'Wiedergabe nicht möglich'}` : 'Playerfehler: Wiedergabe nicht möglich';
   };
-  video.onplaying = () => {
-    if ($('playerMeta').textContent === 'Stream wird geladen …') $('playerMeta').textContent = '';
-  };
+  video.onplaying = () => { if ($('playerMeta').textContent === 'Stream wird geladen …') $('playerMeta').textContent = ''; };
 
-  if (streamType === 'hls' && window.Hls && Hls.isSupported()) {
-    state.hls = new Hls({
-      enableWorker: true,
-      lowLatencyMode: false,
-      liveSyncDurationCount: 3,
-      maxBufferLength: 30,
-      manifestLoadingTimeOut: 25000,
-      levelLoadingTimeOut: 25000,
-      fragLoadingTimeOut: 30000
-    });
+  if (window.Hls && Hls.isSupported()) {
+    state.hls = new Hls({ enableWorker: true, lowLatencyMode: false, liveSyncDurationCount: 3, maxBufferLength: 30, manifestLoadingTimeOut: 30000, fragLoadingTimeOut: 30000 });
     state.hls.loadSource(absoluteUrl);
     state.hls.attachMedia(video);
     state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; }));
@@ -172,17 +161,12 @@ function attachPlayer(url, streamType = 'hls') {
       else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) state.hls.recoverMediaError();
       else destroyPlayer();
     });
-    return;
-  }
-
-  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = absoluteUrl;
-    video.load();
     video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
-    return;
+  } else {
+    $('playerMeta').textContent = 'HLS-Wiedergabe wird von diesem Browser nicht unterstützt.';
   }
-
-  $('playerMeta').textContent = 'HLS-Wiedergabe wird von diesem Browser nicht unterstützt.';
 }
 
 async function loadEpg(item) {
@@ -202,57 +186,54 @@ async function loadEpg(item) {
   } catch (_) {}
 }
 
+async function renderSeriesLevel(seriesId, season = null, heading = '') {
+  $('seriesTitle').textContent = heading || 'Episoden';
+  $('episodes').innerHTML = '<span class="muted">Lade …</span>';
+  $('seriesDialog').showModal();
+  const suffix = season ? `?season=${encodeURIComponent(season)}` : '';
+  try {
+    const values = normalizeArray(await api(`/api/episodes/${encodeURIComponent(seriesId)}${suffix}`));
+    $('episodes').innerHTML = '';
+    for (const entry of values) {
+      const button = document.createElement('button');
+      button.textContent = titleOf(entry);
+      if (looksLikeSeason(entry)) {
+        const seasonId = seasonOf(entry);
+        button.onclick = () => renderSeriesLevel(seriesId, seasonId, `${heading || 'Serie'} – ${titleOf(entry)}`);
+      } else {
+        const seriesValue = entry.series || entry.series_number || entry.episode_id || null;
+        button.onclick = () => { $('seriesDialog').close(); playItem(entry, seriesValue); };
+      }
+      $('episodes').append(button);
+    }
+    if (!values.length) $('episodes').textContent = 'Keine Staffeln oder Episoden gefunden.';
+  } catch (error) { $('episodes').textContent = error.message; }
+}
+
 async function openSeries(item) {
   const id = cleanId(item.movie_id || item.series_id || item.id);
   if (!id) return showMessage('Keine Serien-ID vorhanden.');
-  $('seriesTitle').textContent = titleOf(item);
-  $('episodes').innerHTML = '<span class="muted">Lade Episoden …</span>';
-  $('seriesDialog').showModal();
-  try {
-    const values = normalizeArray(await api(`/api/episodes/${encodeURIComponent(id)}`));
-    $('episodes').innerHTML = '';
-    for (const episode of values) {
-      const button = document.createElement('button');
-      const season = episode.season || episode.season_number || episode.season_id || '';
-      const number = episode.episode || episode.episode_number || episode.series_number || '';
-      const prefix = [season ? `S${season}` : '', number ? `E${number}` : ''].filter(Boolean).join(' ');
-      button.textContent = `${prefix}${prefix ? ' – ' : ''}${titleOf(episode)}`;
-      button.onclick = () => {
-        $('seriesDialog').close();
-        const seriesValue = episode.series || episode.series_number || episode.episode_id || null;
-        playItem(episode, seriesValue);
-      };
-      $('episodes').append(button);
-    }
-    if (!values.length) $('episodes').textContent = 'Keine Episoden gefunden.';
-  } catch (error) { $('episodes').textContent = error.message; }
+  await renderSeriesLevel(id, null, titleOf(item));
 }
 
 $('settingsForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('settingsError').textContent = '';
   try {
-    await api('/api/config', {
-      method: 'PUT',
-      body: JSON.stringify({ portal_url: $('portalUrl').value, portal_mac: $('portalMac').value })
-    });
+    await api('/api/config', { method: 'PUT', body: JSON.stringify({ portal_url: $('portalUrl').value, portal_mac: $('portalMac').value }) });
     state.configured = true;
     $('settingsDialog').close();
-    await loadStatus();
-    await loadCategories();
-    await loadContent();
+    await loadStatus(); await loadCategories(); await loadContent();
   } catch (error) { $('settingsError').textContent = error.message; }
 });
 
 for (const button of document.querySelectorAll('#tabs button')) {
   button.onclick = async () => {
-    state.type = button.dataset.type;
-    state.category = '*';
+    state.type = button.dataset.type; state.category = '*';
     $('sectionTitle').textContent = sectionTitles[state.type];
     showMessage('');
     document.querySelectorAll('#tabs button').forEach((node) => node.classList.toggle('active', node === button));
-    await loadCategories();
-    await loadContent();
+    await loadCategories(); await loadContent();
   };
 }
 
@@ -265,9 +246,4 @@ $('closePlayer').onclick = () => $('playerDialog').close();
 $('closeSeries').onclick = () => $('seriesDialog').close();
 $('playerDialog').addEventListener('close', destroyPlayer);
 
-(async () => {
-  await loadConfig(true);
-  await loadStatus();
-  await loadCategories();
-  await loadContent();
-})();
+(async () => { await loadConfig(true); await loadStatus(); await loadCategories(); await loadContent(); })();
