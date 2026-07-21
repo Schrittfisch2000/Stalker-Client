@@ -4,9 +4,8 @@ import json
 import os
 import secrets
 import tempfile
-import time
+from contextvars import ContextVar, Token
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -14,6 +13,7 @@ from .storage import data_file
 
 CONFIG_FILE = Path(os.getenv("CONFIG_FILE", str(data_file("portal-einstellungen.json"))))
 SECRET_FILE = Path(os.getenv("SECRET_FILE", str(data_file(".stalker-geheimnis"))))
+_portal_override: ContextVar[PortalConfig | None] = ContextVar("portal_override", default=None)
 
 
 class PortalConfig(BaseModel):
@@ -53,6 +53,14 @@ class Settings(PortalConfig):
     request_timeout: float = 20.0
 
 
+def set_portal_override(config: PortalConfig | None) -> Token:
+    return _portal_override.set(config)
+
+
+def reset_portal_override(token: Token) -> None:
+    _portal_override.reset(token)
+
+
 def _atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
@@ -66,21 +74,10 @@ def _atomic_write(path: Path, content: str) -> None:
             os.unlink(temporary)
 
 
-def _read_config_data() -> dict[str, Any]:
-    if not CONFIG_FILE.exists():
-        return {}
-    try:
-        value = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
 def load_or_create_app_secret() -> str:
     configured = os.getenv("APP_SECRET", "").strip()
     if len(configured) >= 16:
         return configured
-
     if SECRET_FILE.exists():
         try:
             stored = SECRET_FILE.read_text(encoding="utf-8").strip()
@@ -88,33 +85,28 @@ def load_or_create_app_secret() -> str:
                 return stored
         except OSError:
             pass
-
     generated = secrets.token_urlsafe(48)
     _atomic_write(SECRET_FILE, generated + "\n")
     return generated
 
 
 def load_portal_config() -> PortalConfig | None:
-    raw = _read_config_data()
-    if raw:
+    override = _portal_override.get()
+    if override is not None:
+        return override
+    if CONFIG_FILE.exists():
         try:
-            if "portal_url" in raw and "portal_mac" in raw:
-                return PortalConfig.model_validate(raw)
-
-            portals = raw.get("portals", [])
-            if isinstance(portals, list) and portals:
+            raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and "portals" in raw:
+                portals = raw.get("portals", [])
                 default_id = str(raw.get("default_portal_id", ""))
-                selected = next(
-                    (portal for portal in portals if str(portal.get("id", "")) == default_id and portal.get("active", True)),
-                    None,
-                )
+                selected = next((item for item in portals if str(item.get("id")) == default_id and item.get("active", True)), None)
                 if selected is None:
-                    selected = next((portal for portal in portals if portal.get("active", True)), None)
-                if isinstance(selected, dict):
-                    return PortalConfig.model_validate(selected)
-        except (ValueError, TypeError):
+                    selected = next((item for item in portals if item.get("active", True)), None)
+                return PortalConfig.model_validate(selected) if selected else None
+            return PortalConfig.model_validate(raw)
+        except (OSError, ValueError, json.JSONDecodeError):
             return None
-
     url = os.getenv("PORTAL_URL", "").strip()
     mac = os.getenv("PORTAL_MAC", "").strip()
     if url and mac:
@@ -123,31 +115,13 @@ def load_portal_config() -> PortalConfig | None:
 
 
 def save_portal_config(config: PortalConfig) -> None:
-    raw = _read_config_data()
-    if isinstance(raw.get("portals"), list):
-        portals = raw["portals"]
-        default_id = str(raw.get("default_portal_id", ""))
-        selected = next((portal for portal in portals if str(portal.get("id", "")) == default_id), None)
-        if selected is None:
-            selected = {
-                "id": "standard",
-                "name": "Standardportal",
-                "active": True,
-                "created_at": int(time.time()),
-            }
-            portals.append(selected)
-            raw["default_portal_id"] = "standard"
-        selected.update(config.model_dump())
-        _atomic_write(CONFIG_FILE, json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
-        return
-
     _atomic_write(CONFIG_FILE, config.model_dump_json(indent=2) + "\n")
 
 
 def get_settings() -> Settings:
     portal = load_portal_config()
     if portal is None:
-        raise RuntimeError("Portal ist noch nicht konfiguriert")
+        raise RuntimeError("Portal ist noch nicht konfiguriert oder für diesen Benutzer nicht freigegeben")
     return Settings(
         **portal.model_dump(),
         app_secret=load_or_create_app_secret(),
