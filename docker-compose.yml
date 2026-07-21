@@ -3,14 +3,13 @@ services:
     build: .
     container_name: stalker-client
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       CONFIG_FILE: /config/portal-settings.json
+      SECRET_FILE: /config/.stalker-secret
     volumes:
       - ./:/config
     ports:
-      - "${HOST_PORT:-8080}:8080"
+      - "8080:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s
