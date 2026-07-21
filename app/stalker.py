@@ -140,7 +140,7 @@ class StalkerClient:
     @staticmethod
     def _genre_values(item: dict[str, Any]) -> set[str]:
         values: set[str] = set()
-        for key in ("tv_genre_id", "genre_id", "category_id", "genre", "category"):
+        for key in ("tv_genre_id", "genre_id", "category_id", "genre", "category", "genres", "genre_ids"):
             value = item.get(key)
             if value is None:
                 continue
@@ -209,16 +209,33 @@ class StalkerClient:
                     adult_ids.add(genre_id)
         return categories
 
+    async def _category_channels_from_portal(self, category: str) -> list[dict[str, Any]]:
+        attempts = [
+            ("get_ordered_list", {"genre": category, "category": category, "p": 1, "sortby": "number"}),
+            ("get_all_channels", {"genre": category, "category": category}),
+        ]
+        for action, params in attempts:
+            try:
+                result = self._as_list(await self.call("itv", action, show_adult="1", adult="1", **params))
+            except (PortalError, httpx.HTTPError):
+                continue
+            if result:
+                return result
+        return []
+
     async def listing(self, media_type: str, category: str = "*", page: int = 1, search: str = "") -> Any:
         if media_type == "itv":
             channels = list(await self._all_channels())
             if category not in {"", "*", "all"}:
                 requested = str(category)
                 adult_category = requested in self._adult_genre_ids.get(self._cache_key, set())
-                channels = [
+                filtered = [
                     item for item in channels
                     if requested in self._genre_values(item) or (adult_category and self._is_adult_item(item))
                 ]
+                if adult_category and not filtered:
+                    filtered = await self._category_channels_from_portal(requested)
+                channels = filtered
             if search:
                 needle = search.casefold()
                 channels = [
