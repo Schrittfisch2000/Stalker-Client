@@ -3,10 +3,12 @@ from __future__ import annotations
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
+from .access import category_allowed, router as access_router
 from .auth import current_user, router as auth_router
 from .main import app
 
 app.include_router(auth_router)
+app.include_router(access_router)
 
 
 @app.middleware("http")
@@ -21,14 +23,20 @@ async def benutzer_schutz(request: Request, call_next):
     if public:
         return await call_next(request)
 
-    if not current_user(request):
-        if path.startswith("/api/") or path.startswith("/hls/") or path.startswith("/stream/"):
-            return JSONResponse({"detail": "Bitte anmelden"}, status_code=401)
+    user = current_user(request)
+    if not user:
         return JSONResponse({"detail": "Bitte anmelden"}, status_code=401)
 
-    if path in {"/api/config"} and request.method in {"PUT", "POST", "DELETE"}:
-        user = current_user(request)
-        if not user or user.get("role") != "admin":
-            return JSONResponse({"detail": "Nur Administratoren dürfen die Portal-Einstellungen ändern"}, status_code=403)
+    if path == "/api/config":
+        if user.get("role") != "admin":
+            if request.method in {"PUT", "POST", "DELETE"}:
+                return JSONResponse({"detail": "Nur Administratoren dürfen Portal-Zugangsdaten ändern"}, status_code=403)
+            return JSONResponse({"configured": True, "portal_url": "", "portal_mac": ""})
+
+    if path.startswith("/api/content/"):
+        media_type = path.rsplit("/", 1)[-1]
+        category = request.query_params.get("category", "*")
+        if media_type in {"itv", "vod", "series"} and not category_allowed(user["username"], user["role"], media_type, category):
+            return JSONResponse({"detail": "Diese Kategorie ist für deinen Benutzer nicht freigegeben"}, status_code=403)
 
     return await call_next(request)
