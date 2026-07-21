@@ -6,11 +6,13 @@ from fastapi.responses import JSONResponse
 from .access import category_allowed, router as access_router
 from .auth import current_user, router as auth_router
 from .main import app
+from .media_state import router as media_state_router
 from .storage import ensure_standard_files
 
 ensure_standard_files()
 app.include_router(auth_router)
 app.include_router(access_router)
+app.include_router(media_state_router)
 
 
 @app.middleware("http")
