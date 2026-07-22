@@ -7,6 +7,8 @@ LABEL org.opencontainers.image.title="Stalker Client Deutsch" \
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
     TZ=Europe/Berlin \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -14,8 +16,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /anwendung
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg tzdata gosu \
+RUN DEBIAN_FRONTEND=noninteractive apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg tzdata gosu \
     && ln -snf /usr/share/zoneinfo/Europe/Berlin /etc/localtime \
     && echo "Europe/Berlin" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/* \
@@ -25,7 +27,7 @@ RUN apt-get update \
     && chown anwendung:anwendung /konfiguration
 
 COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=anwendung:anwendung app ./app
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
