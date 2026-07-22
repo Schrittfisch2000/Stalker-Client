@@ -7,8 +7,10 @@ from .access import category_allowed, router as access_router
 from .auth import current_user, router as auth_router
 from .config import PortalConfig, reset_portal_override, set_portal_override
 from .diagnostics import install as install_diagnostics
+from .downloads import router as downloads_router
 from .live_handover import install as install_live_handover
 from .live_runtime_fix import install as install_live_runtime_fix
+from .live_timeline_v2 import install as install_live_timeline_v2
 from .main import app
 from .media_state import router as media_state_router
 from .portals import router as portals_router, selected_portal
@@ -19,6 +21,7 @@ from .version import APP_VERSION
 ensure_standard_files()
 install_safari_hls_fix()
 install_live_runtime_fix()
+install_live_timeline_v2()
 install_live_handover()
 install_diagnostics()
 app.version = APP_VERSION
@@ -26,6 +29,7 @@ app.include_router(auth_router)
 app.include_router(access_router)
 app.include_router(media_state_router)
 app.include_router(portals_router)
+app.include_router(downloads_router)
 
 PORTAL_REQUIRED_PATHS = (
     "/api/status",
@@ -34,8 +38,10 @@ PORTAL_REQUIRED_PATHS = (
     "/api/epg",
     "/api/episodes/",
     "/api/play",
+    "/api/download",
     "/api/live-refresh/",
     "/api/live-release/",
+    "/download/",
     "/stream/",
     "/hls/",
 )
