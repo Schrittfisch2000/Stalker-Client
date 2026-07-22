@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.27 – stabilere Live-TV-Wechsel und Downloads für Filme und Serien**
+**Aktuelle Version: 1.0.28 – stabilere Medienwechsel und korrekte Serienepisoden**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten, Wiedergabefortschritt und Downloads von Filmen und Episoden.
 
@@ -21,9 +21,7 @@ Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portal
 
 Beide Varianten verwenden dasselbe Dockerfile und dieselbe Anwendung. Nur die Compose-Dateien und Installationshinweise unterscheiden sich.
 
-## Dauerhafter TS-Proxy für Live-TV
-
-Seit Version 1.0.24 läuft bei Live-TV eine dauerhafte Pipeline. Version 1.0.25 führte die MPEG-TS-Zeitachsen-Normalisierung ein. Version 1.0.27 richtet beim Wechsel Video-PTS/DTS, Audio-PTS und PCR getrennt auf die laufenden Ausgabeuhren aus und führt den vorgewärmten Ersatzstrom bis zum aktuellen Bild nach:
+## Live-TV-Pipeline
 
 ```text
 Stalker-Portal
@@ -32,7 +30,7 @@ Dauerhafter MPEG-TS-Proxy
       ↓
 Getrennte Video-, Audio- und PCR-Zeitachsen
       ↓
-Keyframe-Wechsel am aktuellen Live-Bild
+Keyframe-Wechsel mit aktuellem Ersatzpuffer
       ↓
 Eine laufende FFmpeg-Instanz
       ↓
@@ -41,30 +39,37 @@ Eine fortlaufende HLS-Playlist
 Ein unveränderter Browserplayer
 ```
 
-Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Die Ersatzverbindung wird bis zu einem zufälligen Zugriffspunkt beziehungsweise Keyframe vorgewärmt. Vor der Übergabe wird sie bis zum aktuellen Bild der bisherigen Verbindung nachgeführt. Beim Wechsel werden die Zeitstempel je Medien-PID und die PCR-Uhr getrennt verschoben, Continuity Counter je PID fortgeführt und die zuletzt bekannten PAT-/PMT-Pakete erneut ausgegeben.
+Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Beim Wechsel werden Video-PTS/DTS, Audio-PTS und PCR unabhängig auf die laufenden Ausgabeuhren ausgerichtet. Version 1.0.28 verwendet bei einer nicht vollständig möglichen Nachführung den neuesten vollständig verfügbaren Keyframe, statt auf den älteren ursprünglichen Ersatzpuffer zurückzufallen.
 
 Wichtige Eigenschaften:
 
 - Der Browserplayer wird beim Tokenwechsel nicht ersetzt.
 - FFmpeg wird beim normalen Tokenwechsel nicht neu gestartet.
-- Die Ersatzverbindung wird vorbereitet, während die alte Verbindung noch Daten liefert.
-- Der Ersatzstrom wird vor der Übergabe bis zum aktuellen Video-PTS nachgeführt.
 - MPEG-TS-Daten werden an 188-Byte-Paketgrenzen ausgerichtet.
-- Der Wechsel erfolgt bevorzugt an einem Keyframe beziehungsweise Random-Access-Punkt.
-- Video-PTS/DTS, Audio-PTS und PCR werden unabhängig auf fortlaufende Zeitachsen verschoben.
-- Ein größerer Paketkontext überträgt Audio- und PCR-Anker zuverlässig mit dem Keyframe.
+- Der Wechsel erfolgt an einem Keyframe beziehungsweise Random-Access-Punkt.
+- Video-, Audio- und PCR-Zeitachsen werden getrennt fortgeführt.
 - Continuity Counter werden pro PID durchgehend neu vergeben.
 - PAT und PMT werden am Umschaltpunkt erneut eingespeist.
-- Ein Lese-Watchdog erneuert eine hängende Portalverbindung.
-- Der bisherige Dual-Player-Handover bleibt deaktiviert.
+- Ein Lese-Watchdog erneuert hängende Portalverbindungen.
+- Beim Wechsel wird der aktuellste vollständige Ersatz-Keyframe bevorzugt.
 
-Kurzzeitig bestehen zwei Portalverbindungen, aber nur eine FFmpeg-Instanz und eine HLS-Sitzung.
+## Wiedergabe von Filmen und Serien
+
+Vor dem Start eines neuen Titels beendet der Browser die vorherige HLS- beziehungsweise Portal-Sitzung. Das ist besonders bei Portalen wichtig, die pro MAC-Adresse nur eine gleichzeitige Streamverbindung zulassen.
+
+Falls ein zeitlich begrenzter VOD-Link neu geöffnet werden muss, erzeugt der Server über das ursprüngliche Portal-Kommando einen frischen Link. Dadurch wird ein bereits verbrauchter oder abgelaufener Link nicht in einer schnellen FFmpeg-Neustartschleife wiederverwendet.
+
+Bei Serien gilt:
+
+- Die spezifische Portalaktion `get_episodes` wird vor breiten Katalogabfragen verwendet.
+- Fremde Filme aus ungefilterten Portalantworten werden verworfen.
+- Leere Listen wie `series=[]` gelten nicht mehr als Episodennummer.
+- Episode, Staffel und übergeordnete Serien-ID werden beim Erzeugen des Streamlinks getrennt übertragen.
+- Die portalspezifische Staffel- und Episodenlogik bleibt auch mit Download-Schaltflächen erhalten.
 
 ## Downloads für Filme und Serien
 
 Bei Filmen erscheint auf der Medienkarte eine Schaltfläche **Download**. Bei Serien besitzt jede abspielbare Episode eine eigene Download-Schaltfläche.
-
-Der Ablauf:
 
 ```text
 Portalstream
@@ -77,10 +82,10 @@ Browser-Download
 ```
 
 - Downloads sind nur für `vod` und `series` verfügbar, nicht für Live-TV.
-- Video, Audiospuren und vorhandene Untertitel werden ohne Qualitätsverlust in einen MKV-Container übernommen.
-- Die Datei wird direkt an den Browser gestreamt und nicht dauerhaft im Container oder im Konfigurationsordner gespeichert.
-- Maximal zwei Downloads laufen gleichzeitig, damit NAS und Portal nicht unkontrolliert belastet werden.
-- Die normalen Benutzer- und Portalzuweisungen gelten auch für Downloads.
+- Video, Audiospuren und vorhandene Untertitel werden ohne Qualitätsverlust übernommen.
+- Die Datei wird direkt an den Browser gestreamt und nicht dauerhaft im Container gespeichert.
+- Maximal zwei Downloads laufen gleichzeitig.
+- Benutzer-, Portal- und Kategorienfreigaben gelten auch für Downloads.
 - Die Funktion umgeht keine Verschlüsselung und keine DRM-Schutzmaßnahmen.
 
 ## Projektstruktur
@@ -105,7 +110,7 @@ Im Hauptverzeichnis des Projekts:
 docker compose up -d --build
 ```
 
-Alternativ ausdrücklich mit der Standard-Compose-Datei:
+Alternativ mit der Standard-Compose-Datei:
 
 ```bash
 docker compose -f deploy/standard/docker-compose.yml up -d --build
@@ -117,9 +122,7 @@ Danach ist die Anwendung erreichbar unter:
 http://localhost:8080
 ```
 
-Weitere Hinweise stehen in `deploy/standard/README.md`.
-
-## Installation auf einer UGREEN DXP8800 Plus
+## Installation auf einer UGREEN-NAS
 
 Docker über das UGOS App Center installieren. Danach über SSH:
 
@@ -131,37 +134,31 @@ mkdir -p konfiguration
 docker compose -f deploy/ugreen/docker-compose.yml up -d --build
 ```
 
-Danach ist die Anwendung erreichbar unter:
+Danach ist die Weboberfläche erreichbar unter:
 
 ```text
 http://IP-DER-NAS:8080
 ```
 
-Über die UGOS-Dockeroberfläche kann dieselbe Datei verwendet werden:
+Über die UGOS-Dockeroberfläche kann dieselbe Compose-Datei verwendet werden:
 
 ```text
 deploy/ugreen/docker-compose.yml
 ```
 
-Weitere Hinweise stehen in `deploy/ugreen/README.md`.
-
 ## Wichtig bei Volumes
 
-Nur die persistenten Daten werden eingebunden:
+Nur der persistente Konfigurationsordner wird eingebunden:
 
 ```text
 konfiguration:/konfiguration
 ```
 
-Der Projektordner darf nicht nach `/anwendung` gemountet werden. Dadurch würde der Anwendungscode aus dem Image überschrieben. Unter UGOS Pro kann dies zu folgendem Fehler führen:
-
-```text
-PermissionError: [Errno 13] Permission denied: '/anwendung/app/__init__.py'
-```
+Der Projektordner darf nicht nach `/anwendung` gemountet werden. Dadurch würde der Anwendungscode aus dem Image überschrieben und es kann zu Berechtigungsfehlern kommen.
 
 ## Konfiguration
 
-Die Anwendung erzeugt die benötigten Dateien beim ersten Start im Ordner `konfiguration/`. Dazu gehören unter anderem:
+Beim ersten Start werden im Ordner `konfiguration/` unter anderem folgende Dateien erzeugt:
 
 ```text
 portal-einstellungen.json
@@ -177,7 +174,7 @@ stalker-client.log
 
 ## Port ändern
 
-Standardmäßig wird Port 8080 verwendet. Über die Umgebungsvariable `STALKER_PORT` kann ein anderer Host-Port gesetzt werden.
+Der Standardport ist 8080. Ein anderer Host-Port kann über `STALKER_PORT` gesetzt werden.
 
 Linux und macOS:
 
@@ -200,27 +197,17 @@ STALKER_PORT=8180 docker compose -f deploy/ugreen/docker-compose.yml up -d --bui
 
 ## Docker-Bedienung
 
-Status:
-
 ```bash
+# Status
 docker compose ps
-```
 
-Logs:
-
-```bash
+# Logs
 docker compose logs -f
-```
 
-Neustart:
-
-```bash
+# Neustart
 docker compose restart
-```
 
-Stoppen:
-
-```bash
+# Stoppen
 docker compose down
 ```
 
@@ -246,18 +233,22 @@ docker compose -f deploy/ugreen/docker-compose.yml up -d
 
 Nach einem Frontend-Update den Browser mit `Strg + F5` beziehungsweise `Cmd + Shift + R` vollständig neu laden.
 
-## Diagnose des TS-Proxys
+## Diagnose
 
-Bei einem erfolgreichen Live-Start erscheinen unter anderem folgende Meldungen:
+Bei einem Live-Start beziehungsweise Wechsel erscheinen unter anderem folgende Meldungen:
 
 ```text
 FFmpeg-HLS mit dauerhaftem TS-Proxy gestartet
 Dauerhafter TS-Proxy mit Mehrfach-Zeitachsen verbunden
-TS-Proxy-Ersatzstrom bis zum aktuellen Bild nachgeführt
+TS-Proxy verwendet den neuesten verfügbaren Keyframe
 TS-Proxy mit getrennten Medienuhren gewechselt
 ```
 
-Die Wechselmeldung enthält die Anzahl der übernommenen TS-Pakete sowie Video-, Audio- und PCR-Anker. Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplayer nicht ersetzt werden.
+Beim Wechsel von Live-TV zu einem Film oder einer Episode sollte außerdem die vorherige HLS-Session sauber beendet werden. Bei einem erforderlichen VOD-Neustart erscheint:
+
+```text
+Frischen Portal-Link für Medienwiedergabe erstellt
+```
 
 ## Sicherheit
 
@@ -269,31 +260,37 @@ Die Wechselmeldung enthält die Anzahl der übernommenen TS-Pakete sowie Video-,
 
 ## Versionsverlauf
 
+### 1.0.28
+
+- Vorherige Portal- und HLS-Sitzung wird vor einer neuen Wiedergabe sofort freigegeben
+- Zeitlich begrenzte VOD- und Serienlinks werden bei einem Neustart frisch erzeugt
+- Neuester vollständiger Keyframe wird bei unvollständiger Live-Nachführung verwendet
+- Spezifische Episodenabfrage wird vor breiten Katalogabfragen ausgeführt
+- Fremde Filme aus fehlerhaften Episodenantworten werden verworfen
+- Leere `series`-Listen werden nicht mehr als Episodennummer übernommen
+- Episodenparameter werden beim `create_link` in der spezifischsten Form zuerst gesendet
+- Download-Erweiterung überschreibt die Seriennavigation nicht mehr
+- Durchgängige Versionsanzeige und Docker-Tags für 1.0.28
+
 ### 1.0.27
 
-- Ersatzverbindung wird vor dem Wechsel bis zum aktuellen Live-Bild nachgeführt
 - Separate Zeitachsenkorrektur für Video, Audio und PCR
-- Größerer Wechselkontext für zuverlässige Audio- und PCR-Anker
+- Größerer Wechselkontext für Audio- und PCR-Anker
 - Lese-Watchdog für hängende Portalverbindungen
 - Sauberes Beenden von TS-Proxy, FFmpeg und HLS-Ordnern
 - Download-Schaltflächen für Filme und einzelne Serienepisoden
-- Verlustfreies Remuxen autorisierter Inhalte als MKV ohne Neucodierung
-- Durchgängige Versionsanzeige und Docker-Tags für 1.0.27
+- Verlustfreies Remuxen autorisierter Inhalte als MKV
 
 ### 1.0.26
 
-- Veraltete 1.0.24-Versions- und Cache-Busting-Einträge im Frontend auf 1.0.26 aktualisiert
-- Standard- und UGREEN-Compose-Image-Tags auf 1.0.26 angehoben
-- README und sichtbare Versionsanzeige auf den neuen Release-Stand gebracht
+- Konsistente Versionsangaben, Frontend-Cache-Parameter und Deployment-Tags
 
 ### 1.0.25
 
-- PTS-/DTS-Normalisierung beim Wechsel der Portalverbindung
-- PCR-Verschiebung auf die fortlaufende Ausgabezeitachse
+- PTS-/DTS- und PCR-Normalisierung beim Wechsel der Portalverbindung
 - Durchgehende MPEG-TS-Continuity-Counter pro PID
-- Vorgewärmte Ersatzverbindung mit bevorzugtem Wechsel am Keyframe
+- Vorgewärmte Ersatzverbindung mit Keyframe-Wechsel
 - Erneute Ausgabe der zuletzt bekannten PAT- und PMT-Pakete
-- Zusätzliche Diagnosewerte für Keyframe-Erkennung und Vorpuffer
 
 ### 1.0.24
 
@@ -301,65 +298,7 @@ Die Wechselmeldung enthält die Anzahl der übernommenen TS-Pakete sowie Video-,
 - Frühzeitiges Öffnen einer Ersatzverbindung mit frischem Portal-Token
 - FFmpeg bleibt während des Tokenwechsels aktiv
 - Eine fortlaufende HLS-Sitzung und ein unveränderter Browserplayer
-- Ausrichtung eingehender Daten an MPEG-TS-Paketgrenzen
-- Neue Zeitstempelbildung über die laufende Systemzeit in FFmpeg
-- Dual-Player-Handover im Browser deaktiviert
 
-### 1.0.23
+### Frühere Versionen
 
-- Ersatzplayer wird vor der Übergabe gezielt am Live-Rand ausgerichtet
-- Einstieg ungefähr 0,75 Sekunden hinter dem Ende des verfügbaren Puffers
-- Hls.js-Live-Synchronisation für den Ersatzplayer auf einen Segmentabstand reduziert
-- Übergabe wird abgebrochen, wenn die Live-Rand-Ausrichtung nicht sicher abgeschlossen werden kann
-- Zusätzliche Konsolenprotokolle für Zielposition, übersprungene Zeit und verbleibenden Puffer
-
-### 1.0.22
-
-- Paralleler, ausgeblendeter Ersatzplayer für Live-TV-Handover
-- Übergabe erst nach laufender Wiedergabe und mindestens drei Sekunden Browserpuffer
-- Aktiver Player bleibt während der kompletten Vorbereitung unangetastet
-- Alte Hls.js- und FFmpeg-Sitzung wird erst nach erfolgreicher Übergabe beendet
-- Playerdiagnose bindet sich nach einem Playerwechsel automatisch neu
-
-### 1.0.21
-
-- Einstieg neuer Hls.js-Sitzungen näher am Live-Rand
-- Weniger sichtbare Wiederholung beim Wechsel zwischen Live-Sitzungen
-
-### 1.0.20
-
-- Vorgewärmte Ersatzsessions mit acht HLS-Segmenten
-- Browserverwalteter Live-Handover mit aktiver Freigabe alter Sitzungen
-- Verhinderung interner Neustarts beendeter Handover-Sitzungen
-
-### 1.0.19
-
-- System- und Browserdiagnose für Live-TV-Probleme
-- Protokollierung von Playerzustand, Puffer und laufenden FFmpeg-Sitzungen
-
-### 1.0.11
-
-- Docker-Build läuft ohne interaktive `debconf`-Frontend-Warnungen
-- `pip`-Root-Warnung und Versionshinweis werden im Container-Build unterdrückt
-- Gemeinsames Dockerfile bleibt für Standard- und UGREEN-Installation erhalten
-
-### 1.0.10
-
-- Proaktive Erneuerung des Live-TV-Portal-Tokens
-- Fortlaufende HLS-Segmentnummern bei FFmpeg-Neustarts
-- Verbesserte Safari-Stabilität bei länger laufenden Live-Streams
-
-### 1.0.9
-
-- Gemeinsames Docker-Image für alle Plattformen
-- Standard-Compose für Windows, Linux und macOS
-- Separate UGREEN-Compose-Datei für UGOS Pro
-- Plattformbezogene Installationsanleitungen
-- Konfigurierbarer Host-Port über `STALKER_PORT`
-- Vermeidung von Host-Mounts auf `/anwendung`
-
-### 1.0.8
-
-- Unterstützung für UGREEN NAS und UGOS Pro
-- UGREEN-kompatibler Entrypoint für persistente Dateirechte
-- Behebung des Berechtigungsfehlers beim Laden von `/anwendung/app/__init__.py`
+Frühere Versionen führten unter anderem Browser-Handover, Diagnoseprotokolle, Mehrportal- und Benutzerverwaltung, UGREEN-Unterstützung sowie das gemeinsame Docker-Deployment ein.
