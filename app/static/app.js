@@ -1,6 +1,7 @@
-const state = { type: 'itv', category: '*', items: [], hls: null, configured: false, contentController: null };
+const state = { type: 'itv', category: '*', items: [], hls: null, configured: false, contentController: null, liveRefreshTimer: null, liveSwitching: false, playerGeneration: 0 };
 const $ = (id) => document.getElementById(id);
 const sectionTitles = { itv: 'Live-TV', vod: 'Filme', series: 'Serien' };
+const LIVE_REFRESH_MS = 70000;
 
 async function api(path, options = {}) {
   let response;
@@ -176,7 +177,7 @@ async function playItem(item, series = null) {
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || 'Stream wird geladen …';
     $('playerDialog').showModal();
-    attachPlayer(result.url);
+    attachPlayer(result.url, mediaType === 'itv');
     showMessage('');
     if (mediaType === 'itv') loadEpg(item);
     else renderMediaInfo(item, mediaType);
@@ -186,8 +187,102 @@ async function playItem(item, series = null) {
   }
 }
 
+function clearLiveRefresh() {
+  if (state.liveRefreshTimer) clearTimeout(state.liveRefreshTimer);
+  state.liveRefreshTimer = null;
+  state.liveSwitching = false;
+}
+
+function ticketFromSource(source) {
+  try {
+    const url = new URL(source, window.location.href);
+    const match = url.pathname.match(/^\/hls\/([^/]+)\/index\.m3u8$/);
+    return match ? match[1] : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function hlsOptions() {
+  return {
+    enableWorker: true,
+    lowLatencyMode: false,
+    liveSyncDurationCount: 3,
+    maxBufferLength: 30,
+    backBufferLength: 10,
+    manifestLoadingTimeOut: 30000,
+    fragLoadingTimeOut: 30000
+  };
+}
+
+function scheduleLiveRefresh(source, generation) {
+  if (!ticketFromSource(source) || generation !== state.playerGeneration) return;
+  if (state.liveRefreshTimer) clearTimeout(state.liveRefreshTimer);
+  state.liveRefreshTimer = setTimeout(() => refreshHlsJsSession(source, generation), LIVE_REFRESH_MS);
+}
+
+function configureHlsInstance(instance, source, generation, isLive, switching = false) {
+  const video = $('player');
+  instance.loadSource(source);
+  instance.attachMedia(video);
+  instance.on(Hls.Events.MANIFEST_PARSED, () => {
+    if (generation !== state.playerGeneration || instance !== state.hls) return;
+    video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+    if (switching) $('playerMeta').textContent = '';
+    if (isLive) scheduleLiveRefresh(source, generation);
+  });
+  instance.on(Hls.Events.ERROR, (_, data) => {
+    if (generation !== state.playerGeneration || instance !== state.hls || !data.fatal) return;
+    $('playerMeta').textContent = `Playerfehler: ${data.details}`;
+    if (data.type === Hls.ErrorTypes.NETWORK_ERROR) instance.startLoad();
+    else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
+    else destroyPlayer();
+  });
+}
+
+async function refreshHlsJsSession(source, generation) {
+  if (state.liveSwitching || generation !== state.playerGeneration || !state.hls) return;
+  const ticket = ticketFromSource(source);
+  if (!ticket) return;
+
+  state.liveSwitching = true;
+  state.liveRefreshTimer = null;
+  const oldHls = state.hls;
+  const video = $('player');
+  const wasMuted = video.muted;
+  const volume = video.volume;
+  $('playerMeta').textContent = 'Nächste Live-Session wird vorbereitet …';
+
+  try {
+    const payload = await api(`/api/live-refresh/${encodeURIComponent(ticket)}`, { method: 'POST' });
+    if (generation !== state.playerGeneration || oldHls !== state.hls || !payload.url) return;
+
+    const freshSource = new URL(`${payload.url}?_handover=${Date.now()}`, window.location.href).href;
+    const freshHls = new Hls(hlsOptions());
+
+    oldHls.stopLoad();
+    oldHls.detachMedia();
+    oldHls.destroy();
+    state.hls = freshHls;
+    video.muted = wasMuted;
+    video.volume = volume;
+    $('playerMeta').textContent = 'Live-Session wird nahtlos gewechselt …';
+    configureHlsInstance(freshHls, freshSource, generation, true, true);
+  } catch (error) {
+    console.warn('Vorgewärmte Live-Session konnte nicht übernommen werden:', error);
+    if (generation === state.playerGeneration && oldHls === state.hls) {
+      $('playerMeta').textContent = 'Vorbereitung der nächsten Live-Session fehlgeschlagen; aktueller Stream läuft weiter.';
+      scheduleLiveRefresh(source, generation);
+    }
+  } finally {
+    state.liveSwitching = false;
+  }
+}
+
 function destroyPlayer() {
   const video = $('player');
+  state.playerGeneration += 1;
+  clearLiveRefresh();
   if (state.hls) { state.hls.destroy(); state.hls = null; }
   video.pause();
   video.removeAttribute('src');
@@ -197,9 +292,10 @@ function destroyPlayer() {
   $('epg').textContent = '';
 }
 
-function attachPlayer(url) {
+function attachPlayer(url, isLive = false) {
   const video = $('player');
   destroyPlayer();
+  const generation = state.playerGeneration;
   const absoluteUrl = new URL(url, window.location.href).href;
   video.onerror = () => {
     const error = video.error;
@@ -208,17 +304,8 @@ function attachPlayer(url) {
   video.onplaying = () => { if ($('playerMeta').textContent === 'Stream wird geladen …') $('playerMeta').textContent = ''; };
 
   if (window.Hls && Hls.isSupported()) {
-    state.hls = new Hls({ enableWorker: true, lowLatencyMode: false, liveSyncDurationCount: 3, maxBufferLength: 30, manifestLoadingTimeOut: 30000, fragLoadingTimeOut: 30000 });
-    state.hls.loadSource(absoluteUrl);
-    state.hls.attachMedia(video);
-    state.hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; }));
-    state.hls.on(Hls.Events.ERROR, (_, data) => {
-      if (!data.fatal) return;
-      $('playerMeta').textContent = `Playerfehler: ${data.details}`;
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) state.hls.startLoad();
-      else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) state.hls.recoverMediaError();
-      else destroyPlayer();
-    });
+    state.hls = new Hls(hlsOptions());
+    configureHlsInstance(state.hls, absoluteUrl, generation, isLive);
   } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
     video.src = absoluteUrl;
     video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
