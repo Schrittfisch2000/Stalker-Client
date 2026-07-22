@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.22 – gepufferter Dual-Player-Handover für Live-TV**
+**Aktuelle Version: 1.0.23 – Live-Handover mit Ausrichtung am Live-Rand**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
 
@@ -30,7 +30,9 @@ Live-TV-Sitzungen mit kurzlebigen Portal-Tokens werden im Browser vorbereitet, b
 - Die Übergabe erfolgt erst, wenn der Ersatzplayer läuft und mindestens drei Sekunden Puffer besitzt.
 - Erst danach werden der alte Player und die alte FFmpeg-Sitzung beendet.
 
-Dadurch soll beim regelmäßigen Token- und Session-Wechsel weder ein leerer Player noch ein sichtbarer Neustart entstehen. Während der Vorbereitung laufen kurzzeitig zwei FFmpeg-Sitzungen parallel.
+Seit Version 1.0.23 wird der vorbereitete Ersatzplayer unmittelbar vor der sichtbaren Übergabe zusätzlich am Ende seines verfügbaren Puffers ausgerichtet. Der Einstieg liegt dabei ungefähr 0,75 Sekunden hinter dem Live-Rand. Dadurch soll Firefox nicht mehr mehrere Sekunden hinter dem aktuellen Bild einsteigen und beim Wechsel eine Wiederholung oder einen wahrgenommenen Aussetzer erzeugen.
+
+Während der Vorbereitung laufen kurzzeitig zwei FFmpeg-Sitzungen parallel.
 
 ## Projektstruktur
 
@@ -203,6 +205,14 @@ Nach einem Frontend-Update den Browser mit `Strg + F5` beziehungsweise `Cmd + Sh
 - Den Ordner `konfiguration` regelmäßig sichern.
 
 ## Versionsverlauf
+
+### 1.0.23
+
+- Ersatzplayer wird vor der Übergabe gezielt am Live-Rand ausgerichtet
+- Einstieg ungefähr 0,75 Sekunden hinter dem Ende des verfügbaren Puffers
+- Hls.js-Live-Synchronisation für den Ersatzplayer auf einen Segmentabstand reduziert
+- Übergabe wird abgebrochen, wenn die Live-Rand-Ausrichtung nicht sicher abgeschlossen werden kann
+- Zusätzliche Konsolenprotokolle für Zielposition, übersprungene Zeit und verbleibenden Puffer
 
 ### 1.0.22
 
