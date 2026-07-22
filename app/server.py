@@ -9,10 +9,12 @@ from .config import PortalConfig, reset_portal_override, set_portal_override
 from .main import app
 from .media_state import router as media_state_router
 from .portals import router as portals_router, selected_portal
+from .safari_hls_fix import install as install_safari_hls_fix
 from .storage import ensure_standard_files
 from .version import APP_VERSION
 
 ensure_standard_files()
+install_safari_hls_fix()
 app.version = APP_VERSION
 app.include_router(auth_router)
 app.include_router(access_router)
