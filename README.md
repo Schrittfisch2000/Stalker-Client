@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.23 – Live-Handover mit Ausrichtung am Live-Rand**
+**Aktuelle Version: 1.0.24 – dauerhafter TS-Proxy für Live-TV**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
 
@@ -21,18 +21,34 @@ Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portal
 
 Beide Varianten verwenden dasselbe Dockerfile und dieselbe Anwendung. Nur die Compose-Dateien und Installationshinweise unterscheiden sich.
 
-## Live-TV-Handover
+## Dauerhafter TS-Proxy für Live-TV
 
-Live-TV-Sitzungen mit kurzlebigen Portal-Tokens werden im Browser vorbereitet, bevor die aktive Sitzung endet. Seit Version 1.0.22 verwendet Firefox/Hls.js dafür zwei Player:
+Seit Version 1.0.24 wird bei Live-TV nicht mehr regelmäßig der Browserplayer oder die FFmpeg-HLS-Sitzung ausgetauscht. Stattdessen läuft eine dauerhafte Pipeline:
 
-- Der aktive Player läuft unverändert weiter.
-- Eine neue Live-Sitzung wird parallel in einem ausgeblendeten Ersatzplayer geladen.
-- Die Übergabe erfolgt erst, wenn der Ersatzplayer läuft und mindestens drei Sekunden Puffer besitzt.
-- Erst danach werden der alte Player und die alte FFmpeg-Sitzung beendet.
+```text
+Stalker-Portal
+      ↓
+Dauerhafter MPEG-TS-Proxy
+      ↓
+Eine laufende FFmpeg-Instanz
+      ↓
+Eine fortlaufende HLS-Playlist
+      ↓
+Ein unveränderter Browserplayer
+```
 
-Seit Version 1.0.23 wird der vorbereitete Ersatzplayer unmittelbar vor der sichtbaren Übergabe zusätzlich am Ende seines verfügbaren Puffers ausgerichtet. Der Einstieg liegt dabei ungefähr 0,75 Sekunden hinter dem Live-Rand. Dadurch soll Firefox nicht mehr mehrere Sekunden hinter dem aktuellen Bild einsteigen und beim Wechsel eine Wiederholung oder einen wahrgenommenen Aussetzer erzeugen.
+Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Sobald sie bereit ist, wird nur die Eingangsverbindung des Proxys gewechselt. FFmpeg bleibt dabei aktiv und erzeugt weiterhin dieselbe HLS-Zeitachse und dieselbe Playlist.
 
-Während der Vorbereitung laufen kurzzeitig zwei FFmpeg-Sitzungen parallel.
+Wichtige Eigenschaften:
+
+- Der Browserplayer wird beim Tokenwechsel nicht ersetzt.
+- FFmpeg wird beim normalen Tokenwechsel nicht neu gestartet.
+- Die Ersatzverbindung wird vorbereitet, während die alte Verbindung noch Daten liefert.
+- MPEG-TS-Daten werden an 188-Byte-Paketgrenzen ausgerichtet.
+- FFmpeg erzeugt aus der dauerhaften Pipe neue Zeitstempel anhand der laufenden Systemzeit.
+- Der bisherige Dual-Player-Handover ist deaktiviert.
+
+Kurzzeitig bestehen zwei Portalverbindungen, aber nur eine FFmpeg-Instanz und eine HLS-Sitzung.
 
 ## Projektstruktur
 
@@ -197,6 +213,18 @@ docker compose -f deploy/ugreen/docker-compose.yml up -d
 
 Nach einem Frontend-Update den Browser mit `Strg + F5` beziehungsweise `Cmd + Shift + R` vollständig neu laden.
 
+## Diagnose des TS-Proxys
+
+Bei einem erfolgreichen Live-Start erscheinen unter anderem folgende Meldungen:
+
+```text
+FFmpeg-HLS mit dauerhaftem TS-Proxy gestartet
+Dauerhafter TS-Proxy verbunden
+TS-Proxy nahtlos auf frischen Portal-Token gewechselt
+```
+
+Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplayer nicht ersetzt werden.
+
 ## Sicherheit
 
 - Konfigurationsdateien, MAC-Adressen, Portalzugänge und Token nicht veröffentlichen.
@@ -205,6 +233,16 @@ Nach einem Frontend-Update den Browser mit `Strg + F5` beziehungsweise `Cmd + Sh
 - Den Ordner `konfiguration` regelmäßig sichern.
 
 ## Versionsverlauf
+
+### 1.0.24
+
+- Dauerhafter MPEG-TS-Proxy zwischen Stalker-Portal und FFmpeg
+- Frühzeitiges Öffnen einer Ersatzverbindung mit frischem Portal-Token
+- FFmpeg bleibt während des Tokenwechsels aktiv
+- Eine fortlaufende HLS-Sitzung und ein unveränderter Browserplayer
+- Ausrichtung eingehender Daten an MPEG-TS-Paketgrenzen
+- Neue Zeitstempelbildung über die laufende Systemzeit in FFmpeg
+- Dual-Player-Handover im Browser deaktiviert
 
 ### 1.0.23
 
