@@ -134,7 +134,11 @@ async def prepare_download(
         str(series) if series is not None else None,
         item,
     )
-    ticket = safari_hls_fix._create_ticket(url, settings, media_type)
+    authorization = {
+        "download_user": user["username"],
+        "download_category": category,
+    }
+    ticket = safari_hls_fix._create_ticket(url, settings, media_type, authorization)
     filename = _download_filename(title)
     query = urlencode({"name": filename})
     main.logger.info(
@@ -150,13 +154,23 @@ async def prepare_download(
 @router.get("/download/{ticket}")
 async def download_media(
     ticket: str,
+    request: Request,
     name: str = Query(default="Download.mkv"),
     settings: Settings = Depends(main.settings_dependency),
     portal: StalkerClient = Depends(main.client),
 ) -> StreamingResponse:
+    user = require_user(request)
     data = safari_hls_fix._read_ticket(ticket, settings)
     if data.get("media_type") not in {"vod", "series"}:
         raise HTTPException(status_code=403, detail="Dieses Ticket erlaubt keinen Download")
+
+    authorization = data.get("playback") if isinstance(data.get("playback"), dict) else {}
+    ticket_user = str(authorization.get("download_user", ""))
+    category = str(authorization.get("download_category", "*"))
+    if not ticket_user or ticket_user != user["username"]:
+        raise HTTPException(status_code=403, detail="Dieses Download-Ticket gehört zu einem anderen Benutzer")
+    if not category_allowed(user["username"], user["role"], str(data["media_type"]), category):
+        raise HTTPException(status_code=403, detail="Diese Kategorie ist für deinen Benutzer nicht freigegeben")
 
     try:
         await asyncio.wait_for(_DOWNLOAD_SLOTS.acquire(), timeout=_DOWNLOAD_SLOT_TIMEOUT_SECONDS)
