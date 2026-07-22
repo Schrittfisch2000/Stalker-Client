@@ -2,12 +2,13 @@ name: stalker-client-deutsch
 
 services:
   stalker-client:
-    image: stalker-client-deutsch:lokal
+    image: stalker-client-deutsch:1.0.8-ugreen
     build:
       context: .
       labels:
         de.stalker-client.beschreibung: "Deutscher Web-Client für Stalker- und MAG-Portale"
-        de.stalker-client.version: "lokal"
+        de.stalker-client.version: "1.0.8"
+        de.stalker-client.plattform: "UGREEN UGOS Pro"
     container_name: stalker-client-deutsch
     hostname: stalker-client-deutsch
     restart: unless-stopped
@@ -15,24 +16,21 @@ services:
       TZ: Europe/Berlin
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
-      MAIN_DIRECTORY: /hauptordner
-      CONFIG_FILE: /hauptordner/portal-einstellungen.json
-      USERS_FILE: /hauptordner/benutzer.json
-      ACCESS_FILE: /hauptordner/benutzer-freigaben.json
-      HISTORY_FILE: /hauptordner/wiedergabeverlauf.json
-      SECRET_FILE: /hauptordner/.stalker-geheimnis
-      LOG_FILE: /hauptordner/stalker-client.log
+      MAIN_DIRECTORY: /konfiguration
+      CONFIG_FILE: /konfiguration/portal-einstellungen.json
+      SECRET_FILE: /konfiguration/.stalker-geheimnis
+      LOG_FILE: /konfiguration/stalker-client.log
     volumes:
-      - ./:/hauptordner
+      - ./konfiguration:/konfiguration
     ports:
       - "8080:8080"
     labels:
       de.stalker-client.name: "Stalker Client Deutsch"
       de.stalker-client.beschreibung: "Live-TV, Filme und Serien in deutscher Oberfläche"
-      de.stalker-client.verwaltung: "docker compose"
+      de.stalker-client.verwaltung: "UGREEN Docker Compose"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 15s
+      start_period: 20s
