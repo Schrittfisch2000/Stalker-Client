@@ -96,43 +96,71 @@ video { display: block; width: 100%; max-height: 68vh; max-height: 68dvh; backgr
 }
 
 @media (max-width: 600px) {
-  .topbar { padding-inline: .75rem; }
-  .brand { font-size: .92rem; }
-  .header-actions { gap: .4rem; }
-  .header-actions input { width: 100%; }
-  .portal-select { max-width: 9.5rem !important; min-height: 44px; }
-  .hero { min-height: 38vh; padding: 2.5rem 1rem; }
-  .hero h1 { font-size: clamp(2.5rem, 15vw, 3.4rem); }
-  .hero p:not(.eyebrow) { font-size: .95rem; }
-  .hero-actions { align-items: stretch; }
-  .hero-actions .primary { width: 100%; }
-  .catalog-shell { padding: 1rem .75rem calc(5rem + env(safe-area-inset-bottom)); }
-  .section-head h2 { font-size: 1.35rem; }
-  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
-  .card-body { min-height: 4.8rem; padding: .65rem; }
-  .card h3 { font-size: .88rem; }
-  .card p { font-size: .74rem; }
-  dialog, .user-admin { inset: auto 0 0 0; width: 100vw !important; max-width: none !important; max-height: 94dvh; margin: 0; padding: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); border-radius: .9rem .9rem 0 0; }
+  body { font-size: 14px; }
+  .topbar { grid-template-columns: 1fr; gap: .45rem; min-height: auto; padding: max(.55rem, env(safe-area-inset-top)) .65rem .55rem; }
+  .brand { display: none; }
+  .header-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: .4rem; width: 100%; justify-content: stretch; }
+  .header-actions input { grid-column: 1 / -1; grid-row: 2; order: initial; width: 100%; min-height: 38px; height: 38px; padding: .45rem .65rem; font-size: 14px; }
+  .portal-select { grid-column: 1 / -1; justify-self: end; max-width: 8rem !important; min-height: 36px !important; height: 36px; padding: .35rem .55rem !important; font-size: 14px !important; }
+  .user-button { height: 36px !important; min-height: 36px !important; padding: 0 .65rem !important; font-size: 14px !important; }
+  .icon-button { width: 36px; height: 36px; min-width: 36px; font-size: 15px; }
+  nav { gap: 0; margin-top: .1rem; padding: 0; }
+  nav button { min-height: 38px; padding: .35rem .65rem; font-size: 14px; }
+  .hero { min-height: 0; padding: 1.4rem .75rem 1.25rem; }
+  .hero-content { max-width: none; }
+  .eyebrow { margin-bottom: .35rem; font-size: .62rem; letter-spacing: .14em; }
+  .hero h1 { font-size: clamp(2rem, 10vw, 2.7rem); line-height: .98; }
+  .hero p:not(.eyebrow) { margin: .65rem 0 0; font-size: .82rem; line-height: 1.42; }
+  .hero-actions { gap: .55rem; margin-top: .85rem; }
+  .hero-actions .primary { width: auto; min-height: 38px; padding: .55rem .8rem; font-size: .86rem; }
+  .hero-actions span { font-size: .72rem; }
+  .catalog-shell { gap: .65rem; padding: .75rem .65rem calc(4rem + env(safe-area-inset-bottom)); }
+  aside h2 { margin-bottom: .45rem; font-size: .84rem; }
+  .category-list { gap: .35rem; padding-bottom: .2rem; }
+  .category-list button { min-height: 36px; padding: .45rem .65rem; font-size: .8rem; }
+  .section-head { align-items: center; margin-bottom: .65rem; }
+  .section-head h2 { font-size: 1.15rem; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; }
+  .card-body { min-height: 4rem; padding: .5rem; }
+  .card h3 { margin-bottom: .25rem; font-size: .8rem; }
+  .card p { font-size: .68rem; line-height: 1.3; }
+  .placeholder { font-size: 1.6rem; }
+  .message { margin-bottom: .65rem; padding: .65rem .75rem; font-size: .8rem; }
+  dialog, .user-admin { inset: auto 0 0 0; width: 100vw !important; max-width: none !important; max-height: 90dvh; margin: 0; padding: .75rem; padding-bottom: max(.75rem, env(safe-area-inset-bottom)); border-radius: .75rem .75rem 0 0; font-size: 13px; }
   .player-dialog { height: auto; }
-  .player-dialog video { max-height: 52dvh; }
-  .dialog-head { position: sticky; top: -1rem; z-index: 2; margin: -1rem -1rem 1rem; padding: 1rem; background: #141414; border-bottom: 1px solid #292929; }
-  .episode-list button { width: 100%; }
+  .player-dialog video { max-height: 42dvh; }
+  .dialog-head { position: sticky; top: -.75rem; z-index: 2; margin: -.75rem -.75rem .65rem; padding: .75rem; background: #141414; border-bottom: 1px solid #292929; }
+  .dialog-head h2 { font-size: 1.2rem; }
+  .dialog-head p { margin: .35rem 0 0; font-size: .78rem; line-height: 1.35; }
+  .dialog-head > button { width: 36px; height: 36px; flex-basis: 36px; font-size: 1.6rem; }
+  .epg { gap: .35rem; margin-top: .65rem; }
+  .epg div { padding: .55rem; }
+  .epg strong { font-size: .85rem; }
+  .epg span { font-size: .76rem; }
+  .episode-list { gap: .35rem; margin-top: .65rem; }
+  .episode-list button { width: 100%; min-height: 38px; padding: .55rem .7rem; font-size: .82rem; }
   .portal-checks { grid-template-columns: 1fr !important; }
   .portal-row-actions, .portal-actions { grid-template-columns: 1fr !important; }
-  .admin-tabs { overflow-x: auto; scrollbar-width: none; }
+  .portal-admin-row, .portal-assignment-row { padding: .7rem !important; gap: .55rem !important; }
+  .portal-admin-row input, .portal-create input, .user-grid input, .user-grid select { min-height: 38px !important; padding: .5rem .6rem !important; font-size: 14px !important; }
+  .portal-row-actions button, .portal-actions button, .user-row button, .admin-tabs button { min-height: 38px !important; padding: .5rem .65rem !important; font-size: .8rem !important; }
+  .portal-checks label { padding: .45rem .55rem !important; font-size: .8rem; }
+  .admin-tabs { gap: .3rem !important; margin: .7rem 0 .4rem !important; overflow-x: auto; scrollbar-width: none; }
   .admin-tabs::-webkit-scrollbar { display: none; }
-  .admin-tabs button { flex: 1 0 auto; min-height: 44px; }
-  .auth-overlay { padding: 1rem !important; }
-  .auth-card { padding: 1.25rem !important; }
+  .auth-overlay { padding: .65rem !important; }
+  .auth-card { padding: 1rem !important; font-size: 14px; }
+  #appVersion { right: max(7px, env(safe-area-inset-right)) !important; bottom: max(7px, env(safe-area-inset-bottom)) !important; padding: 4px 6px !important; font-size: 10px !important; }
 }
 
 @media (max-width: 380px) {
-  .grid { grid-template-columns: 1fr; }
-  .brand { max-width: 8rem; }
-  .user-name-button { max-width: 6rem !important; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .header-actions { grid-template-columns: 1fr auto auto; }
+  .user-name-button { max-width: 5rem !important; }
+  .logout-button { font-size: 0 !important; }
+  .logout-button::after { content: '↪'; font-size: 14px; }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {
-  .hero { min-height: 70vh; }
-  .player-dialog video { max-height: 68dvh; }
+  .hero { min-height: 0; padding-block: 1rem; }
+  .player-dialog video { max-height: 58dvh; }
 }
