@@ -111,23 +111,32 @@ async def _ensure_hls_session(
         command = [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
             "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
+        ]
+        if live:
+            # Manche Portalstreams liefern nach einer erneuten Verbindung kurzfristig
+            # schneller als Echtzeit. Safari reagiert darauf mit sichtbaren Pufferstopps.
+            command += ["-re", "-fflags", "+genpts+discardcorrupt"]
+        command += [
             "-i", data["url"],
             "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
             "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
-            "-profile:v", "main", "-pix_fmt", "yuv420p",
+            "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
             "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
             "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "160k",
             "-max_muxing_queue_size", "2048",
+            "-avoid_negative_ts", "make_zero",
             "-f", "hls", "-hls_time", "4",
             "-start_number", str(start_number),
             "-hls_segment_filename", str(directory / "segment-%06d.ts"),
         ]
         if live:
-            # Safari fragt Segmente teilweise verzögert an. Deshalb während der aktiven
-            # Sitzung keine Segmente löschen und die bestehende Playlist fortschreiben.
+            flags = "append_list+omit_endlist+independent_segments+temp_file+program_date_time"
+            if restarting:
+                flags += "+discont_start"
             command += [
-                "-hls_list_size", "12",
-                "-hls_flags", "append_list+omit_endlist+independent_segments+temp_file",
+                "-hls_list_size", "18",
+                "-hls_delete_threshold", "6",
+                "-hls_flags", flags,
             ]
         else:
             command += [
