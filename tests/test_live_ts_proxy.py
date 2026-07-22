@@ -114,6 +114,18 @@ class TimelineNormalizerTests(unittest.TestCase):
             normalizer.begin_switch(None)
         self.assertEqual(normalizer.timestamp_offset, 123_000)
 
+    def test_audio_pts_does_not_replace_known_video_anchor(self) -> None:
+        normalizer = TsTimelineNormalizer(video_pids={0x101})
+        normalizer.normalize(make_pes_packet(0x101, 900_000))
+        normalizer.normalize(make_pes_packet(0x102, 1_800_000))
+
+        self.assertEqual(normalizer.last_output_pts, 1_800_000)
+        self.assertEqual(normalizer.last_output_video_pts, 900_000)
+
+        normalizer.begin_switch(45_000)
+        switched = normalizer.normalize(make_pes_packet(0x101, 45_000))
+        self.assertEqual(_decode_timestamp(switched, 13), 900_000 + TIMELINE_GAP_90KHZ)
+
 
 class SwitchAnchorTests(unittest.TestCase):
     def test_video_pts_is_preferred_over_earlier_audio_pts(self) -> None:
@@ -122,6 +134,10 @@ class SwitchAnchorTests(unittest.TestCase):
             make_pes_packet(0x101, 180_000),
         ]
         self.assertEqual(_select_switch_anchor(packets, {0x101}), 180_000)
+
+    def test_known_video_pid_does_not_fall_back_to_audio_pts(self) -> None:
+        packets = [make_pes_packet(0x102, 270_000)]
+        self.assertIsNone(_select_switch_anchor(packets, {0x101}))
 
     def test_fallback_anchor_is_used_when_video_pid_is_unknown(self) -> None:
         packets = [make_pes_packet(0x102, 270_000)]
