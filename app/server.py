@@ -11,8 +11,10 @@ from .downloads import router as downloads_router
 from .live_handover import install as install_live_handover
 from .live_runtime_fix import install as install_live_runtime_fix
 from .live_timeline_v2 import install as install_live_timeline_v2
+from .live_timeline_v3 import install as install_live_timeline_v3
 from .main import app
 from .media_state import router as media_state_router
+from .playback_runtime_fix import install as install_playback_runtime_fix
 from .portals import router as portals_router, selected_portal
 from .safari_hls_fix import install as install_safari_hls_fix
 from .storage import ensure_standard_files
@@ -22,6 +24,8 @@ ensure_standard_files()
 install_safari_hls_fix()
 install_live_runtime_fix()
 install_live_timeline_v2()
+install_live_timeline_v3()
+install_playback_runtime_fix()
 install_live_handover()
 install_diagnostics()
 app.version = APP_VERSION
