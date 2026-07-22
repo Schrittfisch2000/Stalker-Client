@@ -2,6 +2,8 @@
   const HANDOVER_AFTER_MS = 30000;
   const MIN_STANDBY_BUFFER_SECONDS = 3;
   const STANDBY_TIMEOUT_MS = 15000;
+  const LIVE_EDGE_MARGIN_SECONDS = 0.75;
+  const LIVE_EDGE_SEEK_TIMEOUT_MS = 2500;
 
   function releaseOldSession(ticket) {
     if (!ticket) return;
@@ -15,7 +17,8 @@
   function standbyHlsOptions() {
     const options = { ...hlsOptions() };
     options.startPosition = -1;
-    options.liveSyncDurationCount = 3;
+    options.liveSyncDurationCount = 1;
+    options.liveMaxLatencyDurationCount = 3;
     options.maxBufferLength = 20;
     options.backBufferLength = 5;
     options.maxBufferHole = 0.5;
@@ -31,6 +34,21 @@
       }
     }
     return 0;
+  }
+
+  function activeBufferedRange(video) {
+    for (let index = video.buffered.length - 1; index >= 0; index -= 1) {
+      const start = video.buffered.start(index);
+      const end = video.buffered.end(index);
+      if (video.currentTime >= start - 0.1 && video.currentTime <= end + 0.1) {
+        return { start, end };
+      }
+    }
+    if (video.buffered.length) {
+      const index = video.buffered.length - 1;
+      return { start: video.buffered.start(index), end: video.buffered.end(index) };
+    }
+    return null;
   }
 
   function makeStandbyVideo(activeVideo) {
@@ -96,6 +114,78 @@
     });
   }
 
+  function alignStandbyToLiveEdge(standby, freshHls, generation) {
+    return new Promise((resolve, reject) => {
+      if (generation !== state.playerGeneration || freshHls !== state.standbyHls) {
+        reject(new Error('Live-Handover wurde vor der Live-Rand-Ausrichtung verworfen.'));
+        return;
+      }
+
+      const range = activeBufferedRange(standby);
+      if (!range) {
+        reject(new Error('Ersatzplayer besitzt keinen nutzbaren Puffer.'));
+        return;
+      }
+
+      const hlsLivePosition = Number(freshHls.liveSyncPosition);
+      const bufferedTarget = range.end - LIVE_EDGE_MARGIN_SECONDS;
+      const requestedTarget = Number.isFinite(hlsLivePosition)
+        ? Math.max(bufferedTarget, hlsLivePosition)
+        : bufferedTarget;
+      const target = Math.min(range.end - 0.05, Math.max(range.start + 0.05, requestedTarget));
+      const previousTime = standby.currentTime;
+
+      if (target - previousTime < 0.35) {
+        resolve({ previousTime, target, bufferedEnd: range.end, skipped: 0 });
+        return;
+      }
+
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timeout);
+        standby.removeEventListener('seeked', onSeeked);
+        standby.removeEventListener('canplay', onSeeked);
+      };
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback(value);
+      };
+      const onSeeked = () => {
+        if (generation !== state.playerGeneration || freshHls !== state.standbyHls) {
+          finish(reject, new Error('Live-Handover wurde während der Live-Rand-Ausrichtung verworfen.'));
+          return;
+        }
+        if (standby.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && Math.abs(standby.currentTime - target) < 0.6) {
+          finish(resolve, {
+            previousTime,
+            target: standby.currentTime,
+            bufferedEnd: range.end,
+            skipped: Math.max(0, standby.currentTime - previousTime),
+          });
+        }
+      };
+
+      standby.addEventListener('seeked', onSeeked);
+      standby.addEventListener('canplay', onSeeked);
+      const timeout = setTimeout(() => {
+        if (Math.abs(standby.currentTime - target) < 0.8 && standby.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+          onSeeked();
+        } else {
+          finish(reject, new Error('Ersatzplayer konnte nicht rechtzeitig am Live-Rand ausgerichtet werden.'));
+        }
+      }, LIVE_EDGE_SEEK_TIMEOUT_MS);
+
+      try {
+        if (typeof standby.fastSeek === 'function') standby.fastSeek(target);
+        else standby.currentTime = target;
+      } catch (error) {
+        finish(reject, error);
+      }
+    });
+  }
+
   function activateStandby(activeVideo, standby, freshHls, oldHls, oldTicket, freshSource, generation) {
     const wasMuted = activeVideo.muted;
     const volume = activeVideo.volume;
@@ -134,7 +224,10 @@
     releaseOldSession(oldTicket);
     $('playerMeta').textContent = '';
     scheduleLiveRefresh(freshSource, generation);
-    console.info('Live-Handover ohne Player-Neustart abgeschlossen');
+    console.info('Live-Handover am Live-Rand abgeschlossen', {
+      currentTime: standby.currentTime,
+      bufferedAhead: bufferedAhead(standby),
+    });
   }
 
   scheduleLiveRefresh = function schedulePreparedLiveRefresh(source, generation) {
@@ -176,6 +269,10 @@
       });
 
       await waitForStandby(standby, freshHls, generation);
+      if (generation !== state.playerGeneration || oldHls !== state.hls || freshHls !== state.standbyHls) return;
+
+      const alignment = await alignStandbyToLiveEdge(standby, freshHls, generation);
+      console.info('Live-Handover-Ersatzplayer am Live-Rand ausgerichtet', alignment);
       if (generation !== state.playerGeneration || oldHls !== state.hls || freshHls !== state.standbyHls) return;
 
       $('playerMeta').textContent = 'Live-Session wird übergeben …';
