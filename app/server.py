@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from .access import category_allowed, router as access_router
 from .auth import current_user, router as auth_router
 from .config import PortalConfig, reset_portal_override, set_portal_override
+from .diagnostics import install as install_diagnostics
 from .main import app
 from .media_state import router as media_state_router
 from .portals import router as portals_router, selected_portal
@@ -15,6 +16,7 @@ from .version import APP_VERSION
 
 ensure_standard_files()
 install_safari_hls_fix()
+install_diagnostics()
 app.version = APP_VERSION
 app.include_router(auth_router)
 app.include_router(access_router)
