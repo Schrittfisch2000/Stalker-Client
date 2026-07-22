@@ -45,6 +45,16 @@
     }
   }
 
+  function releaseOnClose() {
+    const ticket = activeTicket;
+    activeTicket = '';
+    state.activePlaybackTicket = '';
+    if (!ticket) return;
+    releaseTicket(ticket, true).catch((error) => {
+      console.warn('Portal-Wiedergabe konnte beim Schließen nicht freigegeben werden:', error);
+    });
+  }
+
   const originalAttachPlayer = attachPlayer;
   attachPlayer = function attachPlayerWithSessionTracking(url, isLive = false) {
     const result = originalAttachPlayer(url, isLive);
@@ -61,16 +71,10 @@
 
   const originalDestroyPlayer = destroyPlayer;
   destroyPlayer = function destroyPlayerWithSessionRelease() {
-    const ticket = activeTicket;
-    activeTicket = '';
-    state.activePlaybackTicket = '';
-    if (ticket) {
-      releaseTicket(ticket, true).catch((error) => {
-        console.warn('Portal-Wiedergabe konnte beim Schließen nicht freigegeben werden:', error);
-      });
-    }
+    releaseOnClose();
     return originalDestroyPlayer();
   };
 
+  $('playerDialog').addEventListener('close', releaseOnClose);
   window.releaseActivePlayback = releaseActivePlayback;
 })();
