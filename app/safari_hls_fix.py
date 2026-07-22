@@ -111,21 +111,20 @@ async def _ensure_hls_session(
         command = [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
             "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
+            "-probesize", "1000000", "-analyzeduration", "1000000",
         ]
         if live:
-            # Manche Portalstreams liefern nach einer erneuten Verbindung kurzfristig
-            # schneller als Echtzeit. Safari reagiert darauf mit sichtbaren Pufferstopps.
             command += ["-re", "-fflags", "+genpts+discardcorrupt"]
         command += [
             "-i", data["url"],
             "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
-            "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
+            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
             "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
-            "-g", "48", "-keyint_min", "48", "-sc_threshold", "0",
-            "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "160k",
+            "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
+            "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "128k",
             "-max_muxing_queue_size", "2048",
             "-avoid_negative_ts", "make_zero",
-            "-f", "hls", "-hls_time", "4",
+            "-f", "hls", "-hls_init_time", "1", "-hls_time", "1",
             "-start_number", str(start_number),
             "-hls_segment_filename", str(directory / "segment-%06d.ts"),
         ]
@@ -134,8 +133,8 @@ async def _ensure_hls_session(
             if restarting:
                 flags += "+discont_start"
             command += [
-                "-hls_list_size", "18",
-                "-hls_delete_threshold", "6",
+                "-hls_list_size", "24",
+                "-hls_delete_threshold", "8",
                 "-hls_flags", flags,
             ]
         else:
