@@ -56,6 +56,9 @@
   }
 
   const originalAttachPlayer = attachPlayer;
+  const originalPlayItem = playItem;
+  const originalDestroyPlayer = destroyPlayer;
+
   attachPlayer = function attachPlayerWithSessionTracking(url, isLive = false) {
     const result = originalAttachPlayer(url, isLive);
     activeTicket = ticketFromPlaybackUrl(url);
@@ -63,13 +66,16 @@
     return result;
   };
 
-  const originalPlayItem = playItem;
   playItem = async function playItemWithPortalHandover(item, series = null) {
+    if (activeTicket) {
+      // Erst den Browserabruf stoppen. Andernfalls könnte Hls.js die gerade
+      // freigegebene Sitzung durch einen letzten Playlist-Abruf neu starten.
+      originalDestroyPlayer();
+    }
     await releaseActivePlayback();
     return originalPlayItem(item, series);
   };
 
-  const originalDestroyPlayer = destroyPlayer;
   destroyPlayer = function destroyPlayerWithSessionRelease() {
     releaseOnClose();
     return originalDestroyPlayer();
