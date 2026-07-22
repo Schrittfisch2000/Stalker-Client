@@ -3,12 +3,15 @@ from __future__ import annotations
 import unittest
 
 from app.live_timeline_v2 import MultiClockTimelineNormalizer, _packet_source_pcr, _pts_at_or_after
-from app.live_ts_proxy import PCR_WRAP, PTS_WRAP, TIMELINE_GAP_90KHZ, _decode_timestamp, _encode_timestamp
+from app.live_ts_proxy import PCR_WRAP, PTS_WRAP, _decode_timestamp, _encode_timestamp
 
 TS_PACKET_SIZE = 188
 VIDEO_PID = 0x101
 AUDIO_PID = 0x102
 PCR_PID = 0x100
+VIDEO_STEP = 3_600
+AUDIO_STEP = 1_920
+PCR_STEP = 3_600 * 300
 
 
 def make_pes_packet(pid: int, pts: int, dts: int | None = None) -> bytes:
@@ -49,14 +52,18 @@ def make_pcr_packet(pcr: int) -> bytes:
 
 
 class MultiClockTimelineTests(unittest.TestCase):
-    def test_video_audio_and_pcr_are_aligned_independently(self) -> None:
+    def test_video_audio_and_pcr_continue_at_measured_cadence(self) -> None:
         normalizer = MultiClockTimelineNormalizer()
         normalizer.video_pids = {VIDEO_PID}
 
         normalizer.normalize(make_pes_packet(VIDEO_PID, 900_000, 891_000))
+        normalizer.normalize(make_pes_packet(VIDEO_PID, 900_000 + VIDEO_STEP, 891_000 + VIDEO_STEP))
         normalizer.normalize(make_pes_packet(AUDIO_PID, 1_800_000))
+        normalizer.normalize(make_pes_packet(AUDIO_PID, 1_800_000 + AUDIO_STEP))
         initial_pcr = 750_000 * 300 + 17
+        current_pcr = initial_pcr + PCR_STEP
         normalizer.normalize(make_pcr_packet(initial_pcr))
+        normalizer.normalize(make_pcr_packet(current_pcr))
 
         source_video = 45_000
         source_audio = 360_000
@@ -71,13 +78,11 @@ class MultiClockTimelineTests(unittest.TestCase):
         audio = normalizer.normalize(make_pes_packet(AUDIO_PID, source_audio))
         pcr = normalizer.normalize(make_pcr_packet(source_pcr))
 
-        self.assertEqual(_decode_timestamp(video, 13), 900_000 + TIMELINE_GAP_90KHZ)
-        self.assertEqual(_decode_timestamp(video, 18), 891_000 + TIMELINE_GAP_90KHZ)
-        self.assertEqual(_decode_timestamp(audio, 13), 1_800_000 + TIMELINE_GAP_90KHZ)
-        self.assertEqual(
-            _packet_source_pcr(pcr),
-            (initial_pcr + TIMELINE_GAP_90KHZ * 300) % PCR_WRAP,
-        )
+        expected_video_pts = 900_000 + (2 * VIDEO_STEP)
+        self.assertEqual(_decode_timestamp(video, 13), expected_video_pts)
+        self.assertEqual(_decode_timestamp(video, 18), expected_video_pts - 9_000)
+        self.assertEqual(_decode_timestamp(audio, 13), 1_800_000 + (2 * AUDIO_STEP))
+        self.assertEqual(_packet_source_pcr(pcr), (current_pcr + PCR_STEP) % PCR_WRAP)
 
     def test_last_source_video_pts_is_recorded_before_rewrite(self) -> None:
         normalizer = MultiClockTimelineNormalizer()
