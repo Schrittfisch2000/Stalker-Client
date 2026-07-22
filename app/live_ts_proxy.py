@@ -20,6 +20,7 @@ RECONNECT_DELAY_SECONDS = 0.5
 REPLACEMENT_WARMUP_TIMEOUT_SECONDS = 8.0
 MAX_WARMUP_PACKETS = 12000
 TIMELINE_GAP_90KHZ = 9000
+MIN_PACKETS_AFTER_KEYFRAME = 32
 
 
 @dataclass
@@ -56,6 +57,8 @@ class TsTimelineNormalizer:
     switch_pending: bool = False
 
     def begin_switch(self, source_anchor: int | None) -> None:
+        if self.last_output_pts is not None and source_anchor is None:
+            raise ValueError("replacement stream has no video PTS anchor")
         if source_anchor is None or self.last_output_pts is None:
             self.timestamp_offset = 0
         else:
@@ -237,6 +240,16 @@ def _packet_source_pts(packet: bytes) -> int | None:
     return _decode_timestamp(packet, offset + 9)
 
 
+def _select_switch_anchor(packets: list[bytes], video_pids: set[int]) -> int | None:
+    if video_pids:
+        for packet in packets:
+            if _packet_pid(packet) in video_pids:
+                pts = _packet_source_pts(packet)
+                if pts is not None:
+                    return pts
+    return next((_packet_source_pts(packet) for packet in packets if _packet_source_pts(packet) is not None), None)
+
+
 def _contains_random_access(packet: bytes, video_pids: set[int]) -> bool:
     if len(packet) != TS_PACKET_SIZE or packet[0] != 0x47:
         return False
@@ -333,20 +346,23 @@ async def _warm_replacement(
 ) -> PreparedReplacement:
     connection = await _open_upstream(await _fresh_url(data, portal), settings, portal)
     packets: list[bytes] = []
-    source_anchor: int | None = None
     keyframe_index: int | None = None
+    source_anchor: int | None = None
     deadline = time.monotonic() + REPLACEMENT_WARMUP_TIMEOUT_SECONDS
     try:
         while time.monotonic() < deadline and len(packets) < MAX_WARMUP_PACKETS:
             chunk = await asyncio.wait_for(connection.iterator.__anext__(), timeout=2.0)
             for packet in _split_packets(_aligned_ts_payload(connection, chunk)):
                 packets.append(packet)
-                if source_anchor is None:
-                    source_anchor = _packet_source_pts(packet)
-                if _contains_random_access(packet, normalizer.video_pids):
+                if keyframe_index is None and _contains_random_access(packet, normalizer.video_pids):
                     keyframe_index = len(packets) - 1
-                    break
-            if keyframe_index is not None:
+                if keyframe_index is not None:
+                    switch_packets = packets[keyframe_index:]
+                    source_anchor = _select_switch_anchor(switch_packets, normalizer.video_pids)
+                    enough_context = len(switch_packets) >= MIN_PACKETS_AFTER_KEYFRAME
+                    if source_anchor is not None and enough_context:
+                        break
+            if keyframe_index is not None and source_anchor is not None and len(packets) - keyframe_index >= MIN_PACKETS_AFTER_KEYFRAME:
                 break
     except (StopAsyncIteration, asyncio.TimeoutError):
         pass
@@ -354,13 +370,19 @@ async def _warm_replacement(
         await connection.close()
         raise
 
-    if keyframe_index is not None:
-        start = keyframe_index
-        while start > 0 and _packet_pid(packets[start - 1]) in {0, normalizer.pmt_pid}:
-            start -= 1
-        packets = packets[start:]
-        source_anchor = next((_packet_source_pts(packet) for packet in packets if _packet_source_pts(packet) is not None), source_anchor)
-    return PreparedReplacement(connection, packets, source_anchor, keyframe_index is not None)
+    if keyframe_index is None:
+        await connection.close()
+        raise RuntimeError("replacement stream contained no random-access point")
+
+    start = keyframe_index
+    while start > 0 and _packet_pid(packets[start - 1]) in {0, normalizer.pmt_pid}:
+        start -= 1
+    packets = packets[start:]
+    source_anchor = _select_switch_anchor(packets, normalizer.video_pids)
+    if normalizer.last_output_pts is not None and source_anchor is None:
+        await connection.close()
+        raise RuntimeError("replacement stream contained no video PTS after random-access point")
+    return PreparedReplacement(connection, packets, source_anchor, True)
 
 
 async def run_live_ts_proxy(
@@ -381,19 +403,20 @@ async def run_live_ts_proxy(
 
     async def switch_to(replacement: PreparedReplacement) -> None:
         nonlocal current, reconnects
-        if current is not None:
-            await current.close()
-        current = replacement.connection
         normalizer.begin_switch(replacement.source_anchor)
+        previous = current
+        current = replacement.connection
         prefix = normalizer.reinjected_psi()
         payload = prefix + b"".join(filter(None, (normalizer.normalize(packet) for packet in replacement.packets)))
         if payload:
             process.stdin.write(payload)
             await process.stdin.drain()
+        if previous is not None:
+            await previous.close()
         reconnects += 1
         main.logger.info(
-            "TS-Proxy auf normalisierter Zeitachse gewechselt: Session=%s, Wechsel=%s, Keyframe=%s, Pufferpakete=%s",
-            session_id, reconnects, replacement.keyframe_found, len(replacement.packets),
+            "TS-Proxy auf normalisierter Zeitachse gewechselt: Session=%s, Wechsel=%s, Keyframe=%s, Pufferpakete=%s, Anker=%s",
+            session_id, reconnects, replacement.keyframe_found, len(replacement.packets), replacement.source_anchor,
         )
 
     try:
