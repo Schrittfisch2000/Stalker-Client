@@ -53,16 +53,21 @@ class TsTimelineNormalizer:
     psi_packets: dict[int, bytes] = field(default_factory=dict)
     timestamp_offset: int = 0
     last_output_pts: int | None = None
+    last_output_video_pts: int | None = None
     last_output_pcr: int | None = None
     switch_pending: bool = False
 
+    def output_anchor(self) -> int | None:
+        return self.last_output_video_pts if self.last_output_video_pts is not None else self.last_output_pts
+
     def begin_switch(self, source_anchor: int | None) -> None:
-        if self.last_output_pts is not None and source_anchor is None:
+        output_anchor = self.output_anchor()
+        if output_anchor is not None and source_anchor is None:
             raise ValueError("replacement stream has no video PTS anchor")
-        if source_anchor is None or self.last_output_pts is None:
+        if source_anchor is None or output_anchor is None:
             self.timestamp_offset = 0
         else:
-            target = (self.last_output_pts + TIMELINE_GAP_90KHZ) % PTS_WRAP
+            target = (output_anchor + TIMELINE_GAP_90KHZ) % PTS_WRAP
             self.timestamp_offset = (target - source_anchor) % PTS_WRAP
         self.switch_pending = True
 
@@ -198,6 +203,8 @@ class TsTimelineNormalizer:
             rewritten = (pts + self.timestamp_offset) % PTS_WRAP
             _encode_timestamp(packet, pos, rewritten, packet[pos] >> 4)
             self.last_output_pts = rewritten
+            if not self.video_pids or pid in self.video_pids:
+                self.last_output_video_pts = rewritten
             if flags == 3 and pos + 10 <= TS_PACKET_SIZE:
                 dts = _decode_timestamp(packet, pos + 5)
                 _encode_timestamp(packet, pos + 5, (dts + self.timestamp_offset) % PTS_WRAP, packet[pos + 5] >> 4)
@@ -247,6 +254,7 @@ def _select_switch_anchor(packets: list[bytes], video_pids: set[int]) -> int | N
                 pts = _packet_source_pts(packet)
                 if pts is not None:
                     return pts
+        return None
     return next((_packet_source_pts(packet) for packet in packets if _packet_source_pts(packet) is not None), None)
 
 
@@ -379,7 +387,7 @@ async def _warm_replacement(
         start -= 1
     packets = packets[start:]
     source_anchor = _select_switch_anchor(packets, normalizer.video_pids)
-    if normalizer.last_output_pts is not None and source_anchor is None:
+    if normalizer.output_anchor() is not None and source_anchor is None:
         await connection.close()
         raise RuntimeError("replacement stream contained no video PTS after random-access point")
     return PreparedReplacement(connection, packets, source_anchor, True)
