@@ -32,7 +32,7 @@
   createCard = function createSecureCard(item) {
     const card = document.createElement('article');
     card.className = 'card';
-    card.append(imageNode(imageOf(item)));
+    card.append(imageNode(item.image_proxy || item.image || imageOf(item)));
 
     const body = document.createElement('div');
     body.className = 'card-body';
