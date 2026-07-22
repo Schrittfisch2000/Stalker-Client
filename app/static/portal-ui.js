@@ -10,9 +10,30 @@
   const style = document.createElement('style');
   style.textContent = `
     .portal-select{max-width:180px;padding:.65rem .8rem;border:1px solid #444;border-radius:999px;background:#202020;color:#fff}
-    .portal-admin-list{display:grid;gap:12px;margin-top:16px}.portal-admin-row{display:grid;grid-template-columns:1.2fr 1.6fr 1fr auto;gap:10px;align-items:center;padding:12px;border:1px solid #333;border-radius:10px;background:#101010}.portal-admin-row input{width:100%;box-sizing:border-box;padding:10px;background:#080808;border:1px solid #444;color:#fff;border-radius:7px}.portal-admin-row .portal-row-actions{display:flex;gap:6px;flex-wrap:wrap}.portal-admin-row button{background:#333;color:#fff}.portal-admin-row button.danger{background:#7c1118}.portal-admin-row button.default{background:#176b32}.portal-create{display:grid;grid-template-columns:1fr 1.5fr 1fr auto;gap:10px;margin:14px 0}.portal-create input{padding:11px;background:#0d0d0d;border:1px solid #444;color:#fff;border-radius:8px}.portal-assignment{margin-top:18px;padding-top:16px;border-top:1px solid #333}.portal-assignment-grid{display:grid;gap:10px}.portal-assignment-row{display:grid;grid-template-columns:180px 1fr auto;gap:10px;align-items:center}.portal-checks{display:flex;gap:10px;flex-wrap:wrap}.portal-checks label{display:flex;gap:5px;align-items:center;background:#222;padding:7px 9px;border-radius:7px}@media(max-width:850px){.portal-admin-row,.portal-create,.portal-assignment-row{grid-template-columns:1fr}.portal-select{max-width:130px}}
+    .portal-admin-list{display:grid;gap:12px;margin-top:16px}.portal-admin-row{display:grid;grid-template-columns:1.2fr 1.6fr 1fr auto;gap:10px;align-items:center;padding:12px;border:1px solid #333;border-radius:10px;background:#101010}.portal-admin-row input{width:100%;box-sizing:border-box;padding:10px;background:#080808;border:1px solid #444;color:#fff;border-radius:7px}.portal-admin-row .portal-row-actions{display:flex;gap:6px;flex-wrap:wrap}.portal-admin-row button{background:#333;color:#fff}.portal-admin-row button.danger{background:#7c1118}.portal-admin-row button.default{background:#176b32}.portal-create{display:grid;grid-template-columns:1fr 1.5fr 1fr auto;gap:10px;margin:14px 0}.portal-create input{padding:11px;background:#0d0d0d;border:1px solid #444;color:#fff;border-radius:8px}.portal-assignment{margin-top:18px;padding-top:16px;border-top:1px solid #333}.portal-assignment-grid{display:grid;gap:10px}.portal-assignment-row{display:grid;grid-template-columns:180px 1fr auto;gap:10px;align-items:center}.portal-checks{display:flex;gap:10px;flex-wrap:wrap}.portal-checks label{display:flex;gap:5px;align-items:center;background:#222;padding:7px 9px;border-radius:7px}.portal-blocked{padding:24px;border:1px solid #633;border-radius:12px;background:#261416;color:#fff}.portal-blocked strong{display:block;margin-bottom:8px;font-size:1.1rem}@media(max-width:850px){.portal-admin-row,.portal-create,.portal-assignment-row{grid-template-columns:1fr}.portal-select{max-width:130px}}
   `;
   document.head.append(style);
+
+  function blockCatalogWithoutPortal() {
+    const categories = document.getElementById('categories');
+    const items = document.getElementById('items');
+    const message = document.getElementById('message');
+    const search = document.getElementById('search');
+    const status = document.getElementById('status');
+    if (categories) categories.innerHTML = '';
+    if (items) items.innerHTML = '';
+    if (search) { search.value = ''; search.disabled = true; }
+    document.querySelectorAll('#tabs button').forEach((button) => { button.disabled = true; });
+    if (status) {
+      status.textContent = 'Kein Portal zugewiesen';
+      status.className = 'status-badge error';
+    }
+    if (message) {
+      message.hidden = false;
+      message.classList.add('portal-blocked');
+      message.innerHTML = '<strong>Kein Portal zugewiesen</strong>Diesem Benutzer wurde kein Portal zugewiesen. Bitte wende dich an einen Administrator.';
+    }
+  }
 
   async function addPortalSelector() {
     let auth;
@@ -20,7 +41,10 @@
     if (!auth.authenticated) return;
     let data;
     try { data = await request('/api/portals'); } catch (_) { return; }
-    if (!data.portals?.length) return;
+    if (!data.portals?.length) {
+      if (auth.user?.role !== 'admin') blockCatalogWithoutPortal();
+      return;
+    }
     const actions = document.querySelector('.header-actions');
     if (!actions || document.getElementById('portalSelect')) return;
     const select = document.createElement('select');
