@@ -45,7 +45,7 @@ PORTAL_REQUIRED_PATHS = (
     "/api/episodes/",
     "/api/play",
     "/api/download",
-    "/api/image/",
+    "/api/image",
     "/api/live-refresh/",
     "/api/live-release/",
     "/download/",
