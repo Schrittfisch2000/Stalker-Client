@@ -1,0 +1,100 @@
+@media (max-width: 600px) {
+  .catalog-shell aside {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: .55rem;
+    padding: .15rem 0 .25rem;
+  }
+
+  .catalog-shell aside h2 {
+    margin: 0;
+    font-size: .78rem;
+    white-space: nowrap;
+  }
+
+  .mobile-category-select {
+    display: block;
+    width: 100%;
+    height: 34px;
+    min-height: 34px;
+    padding: .35rem 2rem .35rem .65rem;
+    border: 1px solid #3a3a3a;
+    border-radius: .45rem;
+    background: #171717;
+    color: #f5f5f5;
+    font-size: 13px !important;
+  }
+
+  .category-list.mobile-enhanced {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    clip-path: inset(50%) !important;
+    white-space: nowrap !important;
+  }
+
+  .content .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .38rem;
+  }
+
+  .card {
+    border-radius: .35rem;
+  }
+
+  .card img,
+  .card .placeholder {
+    aspect-ratio: 2 / 3;
+  }
+
+  body[data-media-type="itv"] .card img,
+  body[data-media-type="itv"] .card .placeholder {
+    aspect-ratio: 16 / 10;
+    object-fit: contain;
+    padding: .3rem;
+    background: #111;
+  }
+
+  .card-body {
+    min-height: 0;
+    padding: .38rem .4rem .45rem;
+  }
+
+  .card h3 {
+    margin: 0;
+    font-size: .69rem;
+    line-height: 1.22;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .card p {
+    display: none;
+  }
+
+  .placeholder {
+    font-size: 1.15rem;
+  }
+
+  .favorite-button,
+  .favorite-toggle {
+    transform: scale(.82);
+    transform-origin: top right;
+  }
+}
+
+@media (max-width: 360px) {
+  .content .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .3rem;
+  }
+
+  .card h3 {
+    font-size: .64rem;
+  }
+}
