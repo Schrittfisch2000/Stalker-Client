@@ -40,8 +40,12 @@ class VersionConsistencyTests(unittest.TestCase):
         compose = self.read("deploy/standard/docker-compose.yml")
         self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}", compose)
 
-    def test_ugreen_compose_matches_application_version(self) -> None:
+    def test_ugreen_cli_compose_matches_application_version(self) -> None:
         compose = self.read("deploy/ugreen/docker-compose.yml")
+        self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}-ugreen", compose)
+
+    def test_ugreen_ugos_compose_matches_application_version(self) -> None:
+        compose = self.read("docker-compose-ugreen.yml")
         self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}-ugreen", compose)
 
 

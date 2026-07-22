@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAIN_DIRECTORY: /tmp/stalker-client-test
+      CONFIG_FILE: /tmp/stalker-client-test/portal-einstellungen.json
+      SECRET_FILE: /tmp/stalker-client-test/.stalker-geheimnis
+      LOG_FILE: /tmp/stalker-client-test/stalker-client.log
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python 3.12 einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Abhängigkeiten installieren
+        run: python -m pip install -r requirements.txt
+
+      - name: Versehentlich eingecheckte Geheimnisse erkennen
+        shell: bash
+        run: |
+          if git ls-files | grep -E '(^|/)konfiguration/|(^|/)portal-einstellungen\.json$|(^|/)portal-zuweisungen\.json$|(^|/)benutzer(-freigaben)?\.json$|(^|/)\.stalker-geheimnis$|(^|/)stalker-client\.log(\..*)?$'; then
+            echo "Laufzeitkonfiguration oder Geheimnisse dürfen nicht versioniert werden."
+            exit 1
+          fi
+
+      - name: Unittests ausführen
+        id: unit-tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -p "test_*.py" 2>&1 | tee unittest.log
+
+      - name: Testprotokoll speichern
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unittest-log
+          path: unittest.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compose-Dateien validieren
+        run: |
+          docker compose -f docker-compose.yml config >/dev/null
+          docker compose -f docker-compose-ugreen.yml config >/dev/null
+          docker compose -f deploy/standard/docker-compose.yml config >/dev/null
+          docker compose -f deploy/ugreen/docker-compose.yml config >/dev/null
+
+      - name: Docker-Image bauen
+        run: docker build --tag stalker-client-ci:${{ github.sha }} .
+
+      - name: Testergebnis prüfen
+        if: steps.unit-tests.outcome == 'failure'
+        run: exit 1
