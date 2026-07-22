@@ -105,16 +105,23 @@ def _ffmpeg_command(
         "-probesize", "1000000", "-analyzeduration", "1000000",
     ]
     if live:
-        command += ["-re", "-fflags", "+genpts+discardcorrupt"]
+        command += [
+            "-re",
+            "-fflags", "+genpts+discardcorrupt",
+            "-use_wallclock_as_timestamps", "1",
+        ]
     command += [
         "-i", url,
         "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
         "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
+        "-fps_mode", "cfr",
         "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "128k",
+        "-af", "aresample=async=1000:first_pts=0",
         "-max_muxing_queue_size", "2048",
         "-avoid_negative_ts", "make_zero",
+        "-muxpreload", "0", "-muxdelay", "0",
         "-f", "hls", "-hls_init_time", "1", "-hls_time", "1",
         "-start_number", str(start_number),
         "-hls_segment_filename", str(directory / "segment-%06d.ts"),
