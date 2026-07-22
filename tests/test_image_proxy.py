@@ -26,6 +26,13 @@ def settings(portal_url: str = "http://192.168.178.4/stalker_portal") -> Setting
     )
 
 
+def ticket_from_proxy_url(value: str) -> str:
+    prefix = "/api/image?ticket="
+    if not value.startswith(prefix):
+        raise AssertionError(f"Kein Bild-Proxy: {value}")
+    return value.removeprefix(prefix)
+
+
 class ImageProxyTicketTests(unittest.TestCase):
     def test_listing_keeps_original_and_adds_same_origin_proxy(self) -> None:
         configured = settings()
@@ -35,14 +42,13 @@ class ImageProxyTicketTests(unittest.TestCase):
         )
         item = result[0]
         self.assertEqual(item["logo"], "http://cdn.example/logo.png")
-        self.assertTrue(item["image_proxy"].startswith("/api/image/"))
-        ticket = item["image_proxy"].removeprefix("/api/image/")
+        ticket = ticket_from_proxy_url(item["image_proxy"])
         self.assertEqual(read_image_ticket(ticket, configured, now=1), "http://cdn.example/logo.png")
 
     def test_relative_portal_image_is_made_absolute(self) -> None:
         configured = settings()
         result = attach_image_proxies({"logo": "/logos/channel.png"}, configured)
-        ticket = result["image_proxy"].removeprefix("/api/image/")
+        ticket = ticket_from_proxy_url(result["image_proxy"])
         self.assertEqual(
             read_image_ticket(ticket, configured, now=1),
             "http://192.168.178.4/logos/channel.png",
@@ -91,8 +97,14 @@ class ImageProxyFrontendTests(unittest.TestCase):
 
     def test_server_requires_portal_for_image_proxy(self) -> None:
         source = (ROOT / "app/server.py").read_text(encoding="utf-8")
-        self.assertIn('"/api/image/"', source)
+        self.assertIn('"/api/image"', source)
         self.assertIn("install_image_proxy(app)", source)
+
+    def test_ticket_is_not_placed_in_logged_request_path(self) -> None:
+        source = (ROOT / "app/image_proxy.py").read_text(encoding="utf-8")
+        self.assertIn('app.add_api_route("/api/image", image_response', source)
+        self.assertIn('f"/api/image?ticket=', source)
+        self.assertNotIn('app.add_api_route("/api/image/{ticket}"', source)
 
 
 if __name__ == "__main__":
