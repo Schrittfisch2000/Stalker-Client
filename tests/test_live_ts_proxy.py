@@ -9,6 +9,7 @@ from app.live_ts_proxy import (
     TsTimelineNormalizer,
     _decode_timestamp,
     _encode_timestamp,
+    _select_switch_anchor,
 )
 
 TS_PACKET_SIZE = 188
@@ -106,6 +107,32 @@ class TimelineNormalizerTests(unittest.TestCase):
         self.assertEqual(first[3] & 0x0F, 0)
         self.assertEqual(second[3] & 0x0F, 1)
         self.assertEqual(other[3] & 0x0F, 0)
+
+    def test_switch_rejects_missing_anchor_on_active_timeline(self) -> None:
+        normalizer = TsTimelineNormalizer(last_output_pts=900_000, timestamp_offset=123_000)
+        with self.assertRaisesRegex(ValueError, "no video PTS anchor"):
+            normalizer.begin_switch(None)
+        self.assertEqual(normalizer.timestamp_offset, 123_000)
+
+
+class SwitchAnchorTests(unittest.TestCase):
+    def test_video_pts_is_preferred_over_earlier_audio_pts(self) -> None:
+        packets = [
+            make_pes_packet(0x102, 2_700_000),
+            make_pes_packet(0x101, 180_000),
+        ]
+        self.assertEqual(_select_switch_anchor(packets, {0x101}), 180_000)
+
+    def test_fallback_anchor_is_used_when_video_pid_is_unknown(self) -> None:
+        packets = [make_pes_packet(0x102, 270_000)]
+        self.assertEqual(_select_switch_anchor(packets, set()), 270_000)
+
+    def test_missing_pts_returns_no_anchor(self) -> None:
+        packet = bytearray([0xFF] * TS_PACKET_SIZE)
+        packet[0] = 0x47
+        packet[1] = 0x40
+        packet[3] = 0x10
+        self.assertIsNone(_select_switch_anchor([bytes(packet)], {0x101}))
 
 
 if __name__ == "__main__":
