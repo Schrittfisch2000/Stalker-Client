@@ -8,14 +8,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 
 from . import main
 from .config import Settings
 from .stalker import StalkerClient
-
-
-LIVE_TOKEN_REFRESH_SECONDS = 90
 
 
 def _create_ticket(
@@ -171,51 +168,18 @@ async def _start_ffmpeg(
     return process
 
 
-async def _proactive_live_refresh(
-    session_id: str,
-    process: asyncio.subprocess.Process,
-    data: dict[str, Any],
-    portal: StalkerClient,
-    directory: Path,
-    playlist: Path,
-) -> None:
-    try:
-        await asyncio.sleep(LIVE_TOKEN_REFRESH_SECONDS)
-        async with main._hls_lock:
-            current = main._hls_sessions.get(session_id)
-            if not current or current.get("process") is not process:
-                return
-            if process.returncode is not None:
-                return
-            if time.time() - float(current.get("last_access", 0)) > 45:
-                return
-
-            fresh_url = await _renew_stream_url(data, portal)
-            refreshed_data = dict(data)
-            refreshed_data["url"] = fresh_url
-            main.logger.info("Live-TV-Token proaktiv erneuert: Session=%s", session_id)
-
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
-
-            new_process = await _start_ffmpeg(
-                session_id, refreshed_data, portal, directory, playlist, True
-            )
-            current["process"] = new_process
-            current["started_at"] = time.time()
-            current["refresh_task"] = asyncio.create_task(
-                _proactive_live_refresh(
-                    session_id, new_process, refreshed_data, portal, directory, playlist
-                )
-            )
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        main.logger.exception("Proaktive Live-TV-Erneuerung fehlgeschlagen: Session=%s", session_id)
+async def _refresh_live_ticket(
+    ticket: str,
+    settings: Settings = Depends(main.settings_dependency),
+    portal: StalkerClient = Depends(main.client),
+) -> dict[str, str]:
+    data = _read_ticket(ticket, settings)
+    if data.get("media_type") != "itv" or not data.get("playback"):
+        raise HTTPException(status_code=400, detail="Live-TV ticket required")
+    fresh_url = await _renew_stream_url(data, portal)
+    fresh_ticket = _create_ticket(fresh_url, settings, "itv", data["playback"])
+    main.logger.info("Neue Safari-HLS-Session vorbereitet")
+    return {"url": f"/hls/{fresh_ticket}/index.m3u8"}
 
 
 async def _ensure_hls_session(
@@ -235,13 +199,9 @@ async def _ensure_hls_session(
 
         data = _read_ticket(ticket, settings)
         media_type = data["media_type"]
-        live = media_type == "itv"
         restarting = current is not None
 
         if restarting:
-            refresh_task = current.get("refresh_task")
-            if refresh_task:
-                refresh_task.cancel()
             data["url"] = await _renew_stream_url(data, portal)
             main.logger.info("HLS-Link mit frischem Portal-Token erneuert: Session=%s", session_id)
         else:
@@ -249,18 +209,13 @@ async def _ensure_hls_session(
 
         directory.mkdir(parents=True, exist_ok=True)
         process = await _start_ffmpeg(session_id, data, portal, directory, playlist, restarting)
-        session: dict[str, Any] = {
+        main._hls_sessions[session_id] = {
             "process": process,
             "directory": directory,
             "last_access": time.time(),
             "started_at": time.time(),
             "media_type": media_type,
         }
-        if live and data.get("playback"):
-            session["refresh_task"] = asyncio.create_task(
-                _proactive_live_refresh(session_id, process, data, portal, directory, playlist)
-            )
-        main._hls_sessions[session_id] = session
     return session_id, playlist
 
 
@@ -291,6 +246,13 @@ def install() -> None:
     main.create_ticket = _create_ticket
     main.read_ticket = _read_ticket
     main.ensure_hls_session = _ensure_hls_session
+
+    if not any(getattr(route, "path", None) == "/api/live-refresh/{ticket}" for route in main.app.routes):
+        main.app.add_api_route(
+            "/api/live-refresh/{ticket}",
+            _refresh_live_ticket,
+            methods=["POST"],
+        )
 
     for route in main.app.routes:
         if getattr(route, "path", None) == "/api/play" and "POST" in getattr(route, "methods", set()):
