@@ -2,7 +2,7 @@ name: stalker-client-deutsch-ugreen
 
 services:
   stalker-client:
-    image: stalker-client-deutsch:1.0.22-ugreen
+    image: stalker-client-deutsch:1.0.23-ugreen
     build:
       context: ../..
       labels:
