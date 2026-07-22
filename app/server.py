@@ -17,6 +17,17 @@ app.include_router(access_router)
 app.include_router(media_state_router)
 app.include_router(portals_router)
 
+PORTAL_REQUIRED_PATHS = (
+    "/api/status",
+    "/api/categories/",
+    "/api/content/",
+    "/api/epg",
+    "/api/episodes/",
+    "/api/play",
+    "/stream/",
+    "/hls/",
+)
+
 
 @app.middleware("http")
 async def benutzer_schutz(request: Request, call_next):
@@ -40,13 +51,20 @@ async def benutzer_schutz(request: Request, call_next):
                 return JSONResponse({"detail": "Nur Administratoren dürfen Portal-Zugangsdaten ändern"}, status_code=403)
             return JSONResponse({"configured": True, "portal_url": "", "portal_mac": ""})
 
+    portal = selected_portal(request, user["username"], user["role"])
+    requires_portal = any(path == prefix or path.startswith(prefix) for prefix in PORTAL_REQUIRED_PATHS)
+    if requires_portal and portal is None:
+        return JSONResponse(
+            {"detail": "Diesem Benutzer wurde kein Portal zugewiesen. Bitte wende dich an einen Administrator."},
+            status_code=403,
+        )
+
     if path.startswith("/api/content/"):
         media_type = path.rsplit("/", 1)[-1]
         category = request.query_params.get("category", "*")
         if media_type in {"itv", "vod", "series"} and not category_allowed(user["username"], user["role"], media_type, category):
             return JSONResponse({"detail": "Diese Kategorie ist für deinen Benutzer nicht freigegeben"}, status_code=403)
 
-    portal = selected_portal(request, user["username"], user["role"])
     override = None
     if portal:
         override = PortalConfig(
