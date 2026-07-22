@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from . import main, safari_hls_fix
+from .access import category_allowed
+from .auth import require_user
 from .config import Settings
 from .stalker import StalkerClient
 
@@ -107,17 +109,22 @@ async def _collect_stderr(process: asyncio.subprocess.Process) -> list[str]:
 @router.post("/api/download")
 async def prepare_download(
     payload: dict[str, Any],
+    request: Request,
     settings: Settings = Depends(main.settings_dependency),
     portal: StalkerClient = Depends(main.client),
 ) -> dict[str, str]:
+    user = require_user(request)
     media_type = str(payload.get("type", ""))
     command = str(payload.get("cmd", ""))
+    category = str(payload.get("category", "*"))
     series = payload.get("series")
     item = payload.get("item") if isinstance(payload.get("item"), dict) else {}
     title = str(payload.get("title") or item.get("name") or item.get("title") or "Download")
 
     if media_type not in {"vod", "series"}:
         raise HTTPException(status_code=400, detail="Downloads sind nur für Filme und Serien verfügbar")
+    if not category_allowed(user["username"], user["role"], media_type, category):
+        raise HTTPException(status_code=403, detail="Diese Kategorie ist für deinen Benutzer nicht freigegeben")
     if not command:
         raise HTTPException(status_code=400, detail="Für diesen Inhalt fehlt ein Download-Link")
 
@@ -130,7 +137,13 @@ async def prepare_download(
     ticket = safari_hls_fix._create_ticket(url, settings, media_type)
     filename = _download_filename(title)
     query = urlencode({"name": filename})
-    main.logger.info("Download vorbereitet: Typ=%s, Datei=%s", media_type, filename)
+    main.logger.info(
+        "Download vorbereitet: Benutzer=%s, Typ=%s, Kategorie=%s, Datei=%s",
+        user["username"],
+        media_type,
+        category,
+        filename,
+    )
     return {"url": f"/download/{ticket}?{query}", "filename": filename}
 
 
