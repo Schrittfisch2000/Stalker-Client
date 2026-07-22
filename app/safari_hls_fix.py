@@ -15,6 +15,10 @@ from .config import Settings
 from .stalker import StalkerClient
 
 
+PREWARM_SEGMENTS = 3
+PREWARM_TIMEOUT_SECONDS = 18
+
+
 def _create_ticket(
     url: str,
     settings: Settings,
@@ -168,6 +172,28 @@ async def _start_ffmpeg(
     return process
 
 
+async def _wait_until_ready(
+    session_id: str,
+    directory: Path,
+    playlist: Path,
+    process: asyncio.subprocess.Process,
+) -> None:
+    deadline = time.monotonic() + PREWARM_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if process.returncode is not None:
+            raise HTTPException(status_code=502, detail="Replacement stream stopped during startup")
+        segments = list(directory.glob("segment-*.ts"))
+        if playlist.exists() and len(segments) >= PREWARM_SEGMENTS:
+            main.logger.info(
+                "Safari-HLS-Ersatzsession bereit: Session=%s, Segmente=%s",
+                session_id,
+                len(segments),
+            )
+            return
+        await asyncio.sleep(0.25)
+    raise HTTPException(status_code=504, detail="Replacement stream did not become ready in time")
+
+
 async def _refresh_live_ticket(
     ticket: str,
     settings: Settings = Depends(main.settings_dependency),
@@ -176,10 +202,23 @@ async def _refresh_live_ticket(
     data = _read_ticket(ticket, settings)
     if data.get("media_type") != "itv" or not data.get("playback"):
         raise HTTPException(status_code=400, detail="Live-TV ticket required")
+
     fresh_url = await _renew_stream_url(data, portal)
     fresh_ticket = _create_ticket(fresh_url, settings, "itv", data["playback"])
-    main.logger.info("Neue Safari-HLS-Session vorbereitet")
-    return {"url": f"/hls/{fresh_ticket}/index.m3u8"}
+    session_id, playlist = await _ensure_hls_session(fresh_ticket, settings, portal)
+    session = main._hls_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=502, detail="Replacement session was not created")
+
+    await _wait_until_ready(
+        session_id,
+        Path(session["directory"]),
+        playlist,
+        session["process"],
+    )
+    session["last_access"] = time.time()
+    main.logger.info("Vorgewärmte Safari-HLS-Session ausgeliefert: Session=%s", session_id)
+    return {"url": f"/hls/{fresh_ticket}/index.m3u8", "ready": "true"}
 
 
 async def _ensure_hls_session(
