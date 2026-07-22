@@ -16,6 +16,11 @@ CURRENT_READ_TIMEOUT_SECONDS = 6.0
 CATCH_UP_TIMEOUT_SECONDS = 4.0
 MAX_CATCH_UP_PACKETS = 60_000
 MIN_SWITCH_CONTEXT_PACKETS = 1_024
+DEFAULT_VIDEO_STEP_90KHZ = 3_600
+DEFAULT_AUDIO_STEP_90KHZ = 1_920
+DEFAULT_PCR_STEP = legacy.TIMELINE_GAP_90KHZ * 300
+MAX_REASONABLE_PTS_STEP = 90_000
+MAX_REASONABLE_PCR_STEP = MAX_REASONABLE_PTS_STEP * 300
 
 
 @dataclass
@@ -35,8 +40,20 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
         super().__init__()
         self.timestamp_offsets_by_pid: dict[int, int] = {}
         self.last_output_pts_by_pid: dict[int, int] = {}
+        self.last_pts_step_by_pid: dict[int, int] = {}
+        self.last_output_video_pid: int | None = None
         self.last_source_video_pts: int | None = None
+        self.last_pcr_step: int | None = None
         self.pcr_offset: int = 0
+
+    def _default_step_for_pid(self, pid: int) -> int:
+        if pid in self.video_pids:
+            return DEFAULT_VIDEO_STEP_90KHZ
+        return DEFAULT_AUDIO_STEP_90KHZ
+
+    def _next_pts_target(self, pid: int, previous_pts: int) -> int:
+        step = self.last_pts_step_by_pid.get(pid, self._default_step_for_pid(pid))
+        return (previous_pts + step) % legacy.PTS_WRAP
 
     def begin_multi_clock_switch(
         self,
@@ -48,10 +65,18 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
         if output_anchor is not None and source_anchor is None:
             raise ValueError("replacement stream has no video PTS anchor")
 
+        source_video_pid = next(
+            (pid for pid in self.video_pids if pid in source_pts_by_pid),
+            None,
+        )
+        output_video_pid = self.last_output_video_pid or source_video_pid
         if source_anchor is None or output_anchor is None:
             self.timestamp_offset = 0
+        elif output_video_pid is not None:
+            target = self._next_pts_target(output_video_pid, output_anchor)
+            self.timestamp_offset = (target - source_anchor) % legacy.PTS_WRAP
         else:
-            target = (output_anchor + legacy.TIMELINE_GAP_90KHZ) % legacy.PTS_WRAP
+            target = (output_anchor + DEFAULT_VIDEO_STEP_90KHZ) % legacy.PTS_WRAP
             self.timestamp_offset = (target - source_anchor) % legacy.PTS_WRAP
 
         self.timestamp_offsets_by_pid = {}
@@ -59,13 +84,12 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
             previous_pts = self.last_output_pts_by_pid.get(pid)
             if previous_pts is None:
                 continue
-            target = (previous_pts + legacy.TIMELINE_GAP_90KHZ) % legacy.PTS_WRAP
+            target = self._next_pts_target(pid, previous_pts)
             self.timestamp_offsets_by_pid[pid] = (target - source_pts) % legacy.PTS_WRAP
 
         if self.last_output_pcr is not None and source_pcr_anchor is not None:
-            target_pcr = (
-                self.last_output_pcr + legacy.TIMELINE_GAP_90KHZ * 300
-            ) % legacy.PCR_WRAP
+            pcr_step = self.last_pcr_step or DEFAULT_PCR_STEP
+            target_pcr = (self.last_output_pcr + pcr_step) % legacy.PCR_WRAP
             self.pcr_offset = (target_pcr - source_pcr_anchor) % legacy.PCR_WRAP
         else:
             self.pcr_offset = (self.timestamp_offset * 300) % legacy.PCR_WRAP
@@ -89,8 +113,14 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
         extension = ((packet[pos + 4] & 0x01) << 8) | packet[pos + 5]
         source_pcr = base * 300 + extension
         pcr = (source_pcr + self.pcr_offset) % legacy.PCR_WRAP
-        new_base, new_extension = divmod(pcr, 300)
 
+        previous_pcr = self.last_output_pcr
+        if previous_pcr is not None:
+            step = (pcr - previous_pcr) % legacy.PCR_WRAP
+            if 0 < step <= MAX_REASONABLE_PCR_STEP:
+                self.last_pcr_step = step
+
+        new_base, new_extension = divmod(pcr, 300)
         packet[pos] = (new_base >> 25) & 0xFF
         packet[pos + 1] = (new_base >> 17) & 0xFF
         packet[pos + 2] = (new_base >> 9) & 0xFF
@@ -119,10 +149,17 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
             rewritten = (source_pts + offset) % legacy.PTS_WRAP
             legacy._encode_timestamp(packet, pos, rewritten, packet[pos] >> 4)
 
+            previous_pts = self.last_output_pts_by_pid.get(pid)
+            if previous_pts is not None:
+                step = (rewritten - previous_pts) % legacy.PTS_WRAP
+                if 0 < step <= MAX_REASONABLE_PTS_STEP:
+                    self.last_pts_step_by_pid[pid] = step
+
             self.last_output_pts = rewritten
             self.last_output_pts_by_pid[pid] = rewritten
             if not self.video_pids or pid in self.video_pids:
                 self.last_output_video_pts = rewritten
+                self.last_output_video_pid = pid
                 self.last_source_video_pts = source_pts
 
             if flags == 3 and pos + 10 <= legacy.TS_PACKET_SIZE:
@@ -352,7 +389,7 @@ async def run_live_ts_proxy_v2(
 
         reconnects += 1
         main.logger.info(
-            "TS-Proxy mit getrennten Medienuhren gewechselt: Session=%s, Wechsel=%s, Pufferpakete=%s, Videoanker=%s, Audioanker=%s, PCR-Anker=%s",
+            "TS-Proxy mit getrennten Medienuhren gewechselt: Session=%s, Wechsel=%s, Pufferpakete=%s, Videoanker=%s, Medienanker=%s, PCR-Anker=%s",
             session_id,
             reconnects,
             len(replacement.packets),
@@ -413,7 +450,7 @@ async def run_live_ts_proxy_v2(
             if prepared is None and age >= PREPARE_REPLACEMENT_AFTER_SECONDS:
                 prepared = asyncio.create_task(_warm_replacement(data, settings, portal, normalizer))
 
-            if age >= MAX_CONNECTION_AGE_SECONDS:
+            if age >= MAX_CONNECTION_AGE_SECONDS and prepared is not None and prepared.done():
                 try:
                     replacement = await obtain_replacement()
                     await switch_to(replacement)
@@ -425,7 +462,6 @@ async def run_live_ts_proxy_v2(
                         session_id,
                         exc,
                     )
-                    await asyncio.sleep(legacy.RECONNECT_DELAY_SECONDS)
                 else:
                     continue
 
@@ -437,16 +473,13 @@ async def run_live_ts_proxy_v2(
             except asyncio.CancelledError:
                 raise
             except StopAsyncIteration as exc:
-                if await replace_after_error(exc):
-                    continue
+                await replace_after_error(exc)
                 continue
             except asyncio.TimeoutError as exc:
-                if await replace_after_error(exc):
-                    continue
+                await replace_after_error(exc)
                 continue
             except Exception as exc:
-                if await replace_after_error(exc):
-                    continue
+                await replace_after_error(exc)
                 continue
 
             payload = legacy._aligned_ts_payload(current, chunk)
