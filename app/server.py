@@ -10,8 +10,10 @@ from .main import app
 from .media_state import router as media_state_router
 from .portals import router as portals_router, selected_portal
 from .storage import ensure_standard_files
+from .version import APP_VERSION
 
 ensure_standard_files()
+app.version = APP_VERSION
 app.include_router(auth_router)
 app.include_router(access_router)
 app.include_router(media_state_router)
@@ -27,6 +29,11 @@ PORTAL_REQUIRED_PATHS = (
     "/stream/",
     "/hls/",
 )
+
+
+@app.get("/api/version")
+async def application_version() -> dict[str, str]:
+    return {"name": "Stalker Client", "version": APP_VERSION}
 
 
 @app.middleware("http")
