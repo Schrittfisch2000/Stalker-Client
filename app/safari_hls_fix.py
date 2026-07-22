@@ -15,6 +15,9 @@ from .config import Settings
 from .stalker import StalkerClient
 
 
+LIVE_TOKEN_REFRESH_SECONDS = 90
+
+
 def _create_ticket(
     url: str,
     settings: Settings,
@@ -65,6 +68,156 @@ def _next_segment_number(directory: Path) -> int:
     return highest + 1
 
 
+async def _renew_stream_url(data: dict[str, Any], portal: StalkerClient) -> str:
+    playback = data.get("playback")
+    if not playback:
+        return str(data["url"])
+    command_value = str(playback.get("cmd", ""))
+    series = playback.get("series")
+    item = playback.get("item") if isinstance(playback.get("item"), dict) else {}
+    if not command_value:
+        return str(data["url"])
+    return await portal.create_link(
+        str(data["media_type"]),
+        command_value,
+        str(series) if series is not None else None,
+        item,
+    )
+
+
+def _ffmpeg_command(
+    url: str,
+    media_type: str,
+    directory: Path,
+    playlist: Path,
+    portal: StalkerClient,
+    start_number: int,
+    restarting: bool,
+) -> list[str]:
+    live = media_type == "itv"
+    headers = portal.portal_headers_for_stream()
+    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
+    ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+
+    command = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
+        "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
+        "-probesize", "1000000", "-analyzeduration", "1000000",
+    ]
+    if live:
+        command += ["-re", "-fflags", "+genpts+discardcorrupt"]
+    command += [
+        "-i", url,
+        "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
+        "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
+        "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "128k",
+        "-max_muxing_queue_size", "2048",
+        "-avoid_negative_ts", "make_zero",
+        "-f", "hls", "-hls_init_time", "1", "-hls_time", "1",
+        "-start_number", str(start_number),
+        "-hls_segment_filename", str(directory / "segment-%06d.ts"),
+    ]
+    if live:
+        flags = "append_list+omit_endlist+independent_segments+temp_file+program_date_time"
+        if restarting:
+            flags += "+discont_start"
+        command += [
+            "-hls_list_size", "24",
+            "-hls_delete_threshold", "8",
+            "-hls_flags", flags,
+        ]
+    else:
+        command += [
+            "-hls_playlist_type", "event",
+            "-hls_list_size", "0",
+            "-hls_flags", "append_list+independent_segments+temp_file",
+        ]
+    command.append(str(playlist))
+    return command
+
+
+async def _start_ffmpeg(
+    session_id: str,
+    data: dict[str, Any],
+    portal: StalkerClient,
+    directory: Path,
+    playlist: Path,
+    restarting: bool,
+) -> asyncio.subprocess.Process:
+    start_number = _next_segment_number(directory)
+    command = _ffmpeg_command(
+        str(data["url"]), str(data["media_type"]), directory, playlist,
+        portal, start_number, restarting,
+    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
+
+    asyncio.create_task(main.log_ffmpeg(session_id, process))
+    main.logger.info(
+        "FFmpeg-HLS %s: Session=%s, Typ=%s, Startsegment=%s",
+        "neu gestartet" if restarting else "gestartet",
+        session_id,
+        data["media_type"],
+        start_number,
+    )
+    return process
+
+
+async def _proactive_live_refresh(
+    session_id: str,
+    process: asyncio.subprocess.Process,
+    data: dict[str, Any],
+    portal: StalkerClient,
+    directory: Path,
+    playlist: Path,
+) -> None:
+    try:
+        await asyncio.sleep(LIVE_TOKEN_REFRESH_SECONDS)
+        async with main._hls_lock:
+            current = main._hls_sessions.get(session_id)
+            if not current or current.get("process") is not process:
+                return
+            if process.returncode is not None:
+                return
+            if time.time() - float(current.get("last_access", 0)) > 45:
+                return
+
+            fresh_url = await _renew_stream_url(data, portal)
+            refreshed_data = dict(data)
+            refreshed_data["url"] = fresh_url
+            main.logger.info("Live-TV-Token proaktiv erneuert: Session=%s", session_id)
+
+            process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+
+            new_process = await _start_ffmpeg(
+                session_id, refreshed_data, portal, directory, playlist, True
+            )
+            current["process"] = new_process
+            current["started_at"] = time.time()
+            current["refresh_task"] = asyncio.create_task(
+                _proactive_live_refresh(
+                    session_id, new_process, refreshed_data, portal, directory, playlist
+                )
+            )
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        main.logger.exception("Proaktive Live-TV-Erneuerung fehlgeschlagen: Session=%s", session_id)
+
+
 async def _ensure_hls_session(
     ticket: str,
     settings: Settings,
@@ -86,88 +239,28 @@ async def _ensure_hls_session(
         restarting = current is not None
 
         if restarting:
-            playback = data.get("playback")
-            if playback:
-                command_value = str(playback.get("cmd", ""))
-                series = playback.get("series")
-                item = playback.get("item") if isinstance(playback.get("item"), dict) else {}
-                if command_value:
-                    data["url"] = await portal.create_link(
-                        media_type,
-                        command_value,
-                        str(series) if series is not None else None,
-                        item,
-                    )
-                    main.logger.info("HLS-Link mit frischem Portal-Token erneuert: Session=%s", session_id)
+            refresh_task = current.get("refresh_task")
+            if refresh_task:
+                refresh_task.cancel()
+            data["url"] = await _renew_stream_url(data, portal)
+            main.logger.info("HLS-Link mit frischem Portal-Token erneuert: Session=%s", session_id)
         else:
             main.shutil.rmtree(directory, ignore_errors=True)
 
         directory.mkdir(parents=True, exist_ok=True)
-        start_number = _next_segment_number(directory)
-        headers = portal.portal_headers_for_stream()
-        headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
-        ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
-
-        command = [
-            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
-            "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
-            "-probesize", "1000000", "-analyzeduration", "1000000",
-        ]
-        if live:
-            command += ["-re", "-fflags", "+genpts+discardcorrupt"]
-        command += [
-            "-i", data["url"],
-            "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
-            "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-            "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
-            "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
-            "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "128k",
-            "-max_muxing_queue_size", "2048",
-            "-avoid_negative_ts", "make_zero",
-            "-f", "hls", "-hls_init_time", "1", "-hls_time", "1",
-            "-start_number", str(start_number),
-            "-hls_segment_filename", str(directory / "segment-%06d.ts"),
-        ]
-        if live:
-            flags = "append_list+omit_endlist+independent_segments+temp_file+program_date_time"
-            if restarting:
-                flags += "+discont_start"
-            command += [
-                "-hls_list_size", "24",
-                "-hls_delete_threshold", "8",
-                "-hls_flags", flags,
-            ]
-        else:
-            command += [
-                "-hls_playlist_type", "event",
-                "-hls_list_size", "0",
-                "-hls_flags", "append_list+independent_segments+temp_file",
-            ]
-        command.append(str(playlist))
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
-
-        main._hls_sessions[session_id] = {
+        process = await _start_ffmpeg(session_id, data, portal, directory, playlist, restarting)
+        session: dict[str, Any] = {
             "process": process,
             "directory": directory,
             "last_access": time.time(),
+            "started_at": time.time(),
             "media_type": media_type,
         }
-        asyncio.create_task(main.log_ffmpeg(session_id, process))
-        main.logger.info(
-            "FFmpeg-HLS %s: Session=%s, Typ=%s, Startsegment=%s",
-            "neu gestartet" if restarting else "gestartet",
-            session_id,
-            media_type,
-            start_number,
-        )
+        if live and data.get("playback"):
+            session["refresh_task"] = asyncio.create_task(
+                _proactive_live_refresh(session_id, process, data, portal, directory, playlist)
+            )
+        main._hls_sessions[session_id] = session
     return session_id, playlist
 
 
