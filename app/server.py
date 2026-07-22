@@ -8,6 +8,7 @@ from .auth import current_user, router as auth_router
 from .config import PortalConfig, reset_portal_override, set_portal_override
 from .diagnostics import install as install_diagnostics
 from .downloads import router as downloads_router
+from .image_proxy import install as install_image_proxy
 from .live_handover import install as install_live_handover
 from .live_runtime_fix import install as install_live_runtime_fix
 from .live_timeline_v2 import install as install_live_timeline_v2
@@ -34,6 +35,7 @@ app.include_router(access_router)
 app.include_router(media_state_router)
 app.include_router(portals_router)
 app.include_router(downloads_router)
+install_image_proxy(app)
 
 PORTAL_REQUIRED_PATHS = (
     "/api/status",
@@ -43,6 +45,7 @@ PORTAL_REQUIRED_PATHS = (
     "/api/episodes/",
     "/api/play",
     "/api/download",
+    "/api/image/",
     "/api/live-refresh/",
     "/api/live-release/",
     "/download/",
