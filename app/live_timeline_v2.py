@@ -14,7 +14,8 @@ PREPARE_REPLACEMENT_AFTER_SECONDS = 26.0
 MAX_CONNECTION_AGE_SECONDS = 42.0
 CURRENT_READ_TIMEOUT_SECONDS = 6.0
 CATCH_UP_TIMEOUT_SECONDS = 4.0
-MAX_CATCH_UP_PACKETS = 24000
+MAX_CATCH_UP_PACKETS = 60_000
+MIN_SWITCH_CONTEXT_PACKETS = 1_024
 
 
 @dataclass
@@ -74,9 +75,9 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
     def _rewrite_pcr(self, packet: bytearray, adaptation_control: int) -> None:
         if adaptation_control not in (2, 3) or packet[4] < 7:
             return
-        flags = packet[5]
-        if not (flags & 0x10):
+        if not (packet[5] & 0x10):
             return
+
         pos = 6
         base = (
             (packet[pos] << 25)
@@ -89,6 +90,7 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
         source_pcr = base * 300 + extension
         pcr = (source_pcr + self.pcr_offset) % legacy.PCR_WRAP
         new_base, new_extension = divmod(pcr, 300)
+
         packet[pos] = (new_base >> 25) & 0xFF
         packet[pos + 1] = (new_base >> 17) & 0xFF
         packet[pos + 2] = (new_base >> 9) & 0xFF
@@ -108,6 +110,7 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
             return
         if packet[payload_offset:payload_offset + 3] != b"\x00\x00\x01":
             return
+
         flags = (packet[payload_offset + 7] >> 6) & 0x03
         pos = payload_offset + 9
         if flags in (2, 3) and pos + 5 <= legacy.TS_PACKET_SIZE:
@@ -115,11 +118,13 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
             offset = self.timestamp_offsets_by_pid.get(pid, self.timestamp_offset)
             rewritten = (source_pts + offset) % legacy.PTS_WRAP
             legacy._encode_timestamp(packet, pos, rewritten, packet[pos] >> 4)
+
             self.last_output_pts = rewritten
             self.last_output_pts_by_pid[pid] = rewritten
             if not self.video_pids or pid in self.video_pids:
                 self.last_output_video_pts = rewritten
                 self.last_source_video_pts = source_pts
+
             if flags == 3 and pos + 10 <= legacy.TS_PACKET_SIZE:
                 source_dts = legacy._decode_timestamp(packet, pos + 5)
                 legacy._encode_timestamp(
@@ -128,6 +133,7 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
                     (source_dts + offset) % legacy.PTS_WRAP,
                     packet[pos + 5] >> 4,
                 )
+
         if self.switch_pending and pid in self.video_pids:
             self.switch_pending = False
 
@@ -138,6 +144,7 @@ def _packet_source_pcr(packet: bytes) -> int | None:
     adaptation_control = (packet[3] >> 4) & 0x03
     if adaptation_control not in (2, 3) or packet[4] < 7 or not (packet[5] & 0x10):
         return None
+
     pos = 6
     base = (
         (packet[pos] << 25)
@@ -201,6 +208,7 @@ async def _warm_replacement(
     keyframe_index: int | None = None
     source_anchor: int | None = None
     deadline = time.monotonic() + legacy.REPLACEMENT_WARMUP_TIMEOUT_SECONDS
+
     try:
         while time.monotonic() < deadline and len(packets) < legacy.MAX_WARMUP_PACKETS:
             chunk = await asyncio.wait_for(connection.iterator.__anext__(), timeout=2.0)
@@ -208,13 +216,18 @@ async def _warm_replacement(
                 packets.append(packet)
                 if keyframe_index is None and legacy._contains_random_access(packet, normalizer.video_pids):
                     keyframe_index = len(packets) - 1
-                if keyframe_index is not None:
-                    switch_packets = packets[keyframe_index:]
+
+                if keyframe_index is None:
+                    continue
+
+                switch_packets = packets[keyframe_index:]
+                if source_anchor is None:
                     source_anchor = legacy._select_switch_anchor(switch_packets, normalizer.video_pids)
-                    if source_anchor is not None and len(switch_packets) >= legacy.MIN_PACKETS_AFTER_KEYFRAME:
-                        break
+                if source_anchor is not None and len(switch_packets) >= MIN_SWITCH_CONTEXT_PACKETS:
+                    break
+
             if keyframe_index is not None and source_anchor is not None:
-                if len(packets) - keyframe_index >= legacy.MIN_PACKETS_AFTER_KEYFRAME:
+                if len(packets) - keyframe_index >= MIN_SWITCH_CONTEXT_PACKETS:
                     break
     except (StopAsyncIteration, asyncio.TimeoutError):
         pass
@@ -230,6 +243,7 @@ async def _warm_replacement(
     while start > 0 and legacy._packet_pid(packets[start - 1]) in {0, normalizer.pmt_pid}:
         start -= 1
     packets = packets[start:]
+
     replacement = _replacement_from_packets(connection, packets, normalizer)
     if normalizer.output_anchor() is not None and replacement.source_anchor is None:
         await connection.close()
@@ -240,6 +254,7 @@ async def _warm_replacement(
 async def _catch_up_replacement(
     replacement: PreparedReplacementV2,
     normalizer: MultiClockTimelineNormalizer,
+    session_id: str,
 ) -> PreparedReplacementV2:
     target = normalizer.last_source_video_pts
     anchor = replacement.source_anchor
@@ -250,6 +265,7 @@ async def _catch_up_replacement(
     candidate_anchor: int | None = None
     deadline = time.monotonic() + CATCH_UP_TIMEOUT_SECONDS
     read_packets = 0
+
     try:
         while time.monotonic() < deadline and read_packets < MAX_CATCH_UP_PACKETS:
             chunk = await asyncio.wait_for(replacement.connection.iterator.__anext__(), timeout=1.5)
@@ -263,17 +279,37 @@ async def _catch_up_replacement(
                     if candidate_anchor is None:
                         candidate_anchor = legacy._select_switch_anchor(candidate, normalizer.video_pids)
 
-                if candidate_anchor is not None and not _pts_at_or_after(candidate_anchor, target):
+                if candidate_anchor is None or not _pts_at_or_after(candidate_anchor, target):
                     continue
-                if candidate_anchor is not None and len(candidate) >= legacy.MIN_PACKETS_AFTER_KEYFRAME:
+                if len(candidate) >= MIN_SWITCH_CONTEXT_PACKETS:
+                    main.logger.info(
+                        "TS-Proxy-Ersatzstrom bis zum aktuellen Bild nachgeführt: Session=%s, ÜbersprungenePakete=%s, Ziel=%s, Anker=%s",
+                        session_id,
+                        read_packets - len(candidate),
+                        target,
+                        candidate_anchor,
+                    )
                     return _replacement_from_packets(replacement.connection, candidate, normalizer)
     except (StopAsyncIteration, asyncio.TimeoutError):
         pass
 
     main.logger.warning(
-        "TS-Proxy-Ersatzstrom konnte nicht bis zum aktuellen Bild nachgeführt werden; vorbereiteter Keyframe wird verwendet"
+        "TS-Proxy-Ersatzstrom konnte nicht bis zum aktuellen Bild nachgeführt werden: Session=%s, Ziel=%s, Ursprungsanker=%s",
+        session_id,
+        target,
+        anchor,
     )
     return replacement
+
+
+async def _discard_prepared_task(task: asyncio.Task[PreparedReplacementV2]) -> None:
+    if not task.done():
+        task.cancel()
+    try:
+        replacement = await task
+    except (asyncio.CancelledError, Exception):
+        return
+    await replacement.connection.close()
 
 
 async def run_live_ts_proxy_v2(
@@ -294,14 +330,13 @@ async def run_live_ts_proxy_v2(
 
     async def switch_to(replacement: PreparedReplacementV2) -> None:
         nonlocal current, reconnects
-        replacement = await _catch_up_replacement(replacement, normalizer)
+        replacement = await _catch_up_replacement(replacement, normalizer, session_id)
         normalizer.begin_multi_clock_switch(
             replacement.source_anchor,
             replacement.source_pts_by_pid,
             replacement.source_pcr_anchor,
         )
-        previous = current
-        current = replacement.connection
+
         prefix = normalizer.reinjected_psi()
         payload = prefix + b"".join(
             filter(None, (normalizer.normalize(packet) for packet in replacement.packets))
@@ -309,29 +344,62 @@ async def run_live_ts_proxy_v2(
         if payload:
             process.stdin.write(payload)
             await process.stdin.drain()
+
+        previous = current
+        current = replacement.connection
         if previous is not None:
             await previous.close()
+
         reconnects += 1
         main.logger.info(
-            "TS-Proxy mit getrennten Medienuhren gewechselt: Session=%s, Wechsel=%s, Pufferpakete=%s, Videoanker=%s, PCR-Anker=%s",
+            "TS-Proxy mit getrennten Medienuhren gewechselt: Session=%s, Wechsel=%s, Pufferpakete=%s, Videoanker=%s, Audioanker=%s, PCR-Anker=%s",
             session_id,
             reconnects,
             len(replacement.packets),
             replacement.source_anchor,
+            len(replacement.source_pts_by_pid),
             replacement.source_pcr_anchor,
         )
 
     async def obtain_replacement() -> PreparedReplacementV2:
         nonlocal prepared
-        if prepared is None:
-            prepared = asyncio.create_task(_warm_replacement(data, settings, portal, normalizer))
+        task = prepared
+        if task is None:
+            task = asyncio.create_task(_warm_replacement(data, settings, portal, normalizer))
+            prepared = task
+
         try:
             return await asyncio.wait_for(
-                asyncio.shield(prepared),
+                asyncio.shield(task),
                 timeout=legacy.REPLACEMENT_WARMUP_TIMEOUT_SECONDS,
             )
+        except BaseException:
+            await _discard_prepared_task(task)
+            raise
         finally:
-            prepared = None
+            if prepared is task:
+                prepared = None
+
+    async def replace_after_error(error: BaseException) -> bool:
+        main.logger.warning(
+            "TS-Proxy-Upstream wird erneuert: Session=%s, Fehler=%s",
+            session_id,
+            error,
+        )
+        try:
+            replacement = await obtain_replacement()
+            await switch_to(replacement)
+        except asyncio.CancelledError:
+            raise
+        except Exception as reconnect_error:
+            main.logger.warning(
+                "TS-Proxy-Neuverbindung fehlgeschlagen: Session=%s, Fehler=%s",
+                session_id,
+                reconnect_error,
+            )
+            await asyncio.sleep(legacy.RECONNECT_DELAY_SECONDS)
+            return False
+        return True
 
     try:
         current = await legacy._open_upstream(str(data["url"]), settings, portal)
@@ -348,6 +416,9 @@ async def run_live_ts_proxy_v2(
             if age >= MAX_CONNECTION_AGE_SECONDS:
                 try:
                     replacement = await obtain_replacement()
+                    await switch_to(replacement)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
                     main.logger.warning(
                         "TS-Proxy-Zwangswechsel fehlgeschlagen: Session=%s, Fehler=%s",
@@ -356,7 +427,6 @@ async def run_live_ts_proxy_v2(
                     )
                     await asyncio.sleep(legacy.RECONNECT_DELAY_SECONDS)
                 else:
-                    await switch_to(replacement)
                     continue
 
             try:
@@ -366,23 +436,17 @@ async def run_live_ts_proxy_v2(
                 )
             except asyncio.CancelledError:
                 raise
-            except (StopAsyncIteration, asyncio.TimeoutError, Exception) as exc:
-                main.logger.warning(
-                    "TS-Proxy-Upstream wird erneuert: Session=%s, Fehler=%s",
-                    session_id,
-                    exc,
-                )
-                try:
-                    replacement = await obtain_replacement()
-                except Exception as reconnect_exc:
-                    main.logger.warning(
-                        "TS-Proxy-Neuverbindung fehlgeschlagen: Session=%s, Fehler=%s",
-                        session_id,
-                        reconnect_exc,
-                    )
-                    await asyncio.sleep(legacy.RECONNECT_DELAY_SECONDS)
+            except StopAsyncIteration as exc:
+                if await replace_after_error(exc):
                     continue
-                await switch_to(replacement)
+                continue
+            except asyncio.TimeoutError as exc:
+                if await replace_after_error(exc):
+                    continue
+                continue
+            except Exception as exc:
+                if await replace_after_error(exc):
+                    continue
                 continue
 
             payload = legacy._aligned_ts_payload(current, chunk)
@@ -403,12 +467,7 @@ async def run_live_ts_proxy_v2(
         main.logger.exception("Dauerhafter TS-Proxy unerwartet beendet: Session=%s", session_id)
     finally:
         if prepared is not None:
-            prepared.cancel()
-            try:
-                replacement = await prepared
-                await replacement.connection.close()
-            except (asyncio.CancelledError, Exception):
-                pass
+            await _discard_prepared_task(prepared)
         if current is not None:
             await current.close()
         if process.stdin and not process.stdin.is_closing():
