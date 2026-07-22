@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.25 – normalisierte MPEG-TS-Zeitachse bei Live-TV**
+**Aktuelle Version: 1.0.26 – konsistente Versionsangaben und Deployment-Tags**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
 
@@ -238,6 +238,12 @@ Die Wechselmeldung enthält zusätzlich, ob ein Keyframe gefunden wurde und wie 
 - Den Ordner `konfiguration` regelmäßig sichern.
 
 ## Versionsverlauf
+
+### 1.0.26
+
+- Veraltete 1.0.24-Versions- und Cache-Busting-Einträge im Frontend auf 1.0.26 aktualisiert
+- Standard- und UGREEN-Compose-Image-Tags auf 1.0.26 angehoben
+- README und sichtbare Versionsanzeige auf den neuen Release-Stand gebracht
 
 ### 1.0.25
 

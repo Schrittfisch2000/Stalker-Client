@@ -2,7 +2,7 @@ name: stalker-client-deutsch
 
 services:
   stalker-client:
-    image: stalker-client-deutsch:1.0.25
+    image: stalker-client-deutsch:1.0.26
     build:
       context: ../..
     container_name: stalker-client-deutsch
