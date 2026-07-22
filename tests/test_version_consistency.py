@@ -7,7 +7,6 @@ from pathlib import Path
 from app.version import APP_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION_PATTERN = re.compile(r"\b\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?\b")
 
 
 class VersionConsistencyTests(unittest.TestCase):
@@ -20,10 +19,17 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertIsNotNone(match, "README enthält keine aktuelle Versionsangabe")
         self.assertEqual(match.group(1), APP_VERSION)
 
-    def test_frontend_uses_only_application_version(self) -> None:
+    def test_frontend_version_markers_match_application(self) -> None:
         template = self.read("app/templates/index.html")
-        versions = set(VERSION_PATTERN.findall(template))
-        self.assertEqual(versions, {APP_VERSION})
+        title_match = re.search(r"<title>Stalker Client ([0-9]+\.[0-9]+\.[0-9]+)</title>", template)
+        badge_match = re.search(r'id="appVersion"[^>]*>Version ([0-9]+\.[0-9]+\.[0-9]+)</div>', template)
+        cache_versions = set(re.findall(r"/static/[^\"']+\?v=([0-9]+\.[0-9]+\.[0-9]+)", template))
+
+        self.assertIsNotNone(title_match, "Frontend-Titel enthält keine App-Version")
+        self.assertIsNotNone(badge_match, "Frontend-Versionsanzeige fehlt")
+        self.assertEqual(title_match.group(1), APP_VERSION)
+        self.assertEqual(badge_match.group(1), APP_VERSION)
+        self.assertEqual(cache_versions, {APP_VERSION})
 
     def test_root_compose_matches_application_version(self) -> None:
         compose = self.read("docker-compose.yml")
