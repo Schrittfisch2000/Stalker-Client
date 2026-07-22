@@ -22,6 +22,8 @@ Geprüft wurden:
 
 Der vollständige Download einer großen Episode wurde im manuellen Test aus Zeitgründen abgebrochen. Start, HTTP-Antwort und Dateiname waren korrekt; ein vollständiger Langzeit-Download wurde damit nicht abschließend verifiziert.
 
+Für diesen Stand sind im Repository derzeit keine GitHub-Actions-Workflows eingerichtet. Die Freigabe basiert deshalb auf den vorhandenen Regressionstests im Quellcode und dem beschriebenen manuellen Laufzeittest.
+
 ## Unterstützte Plattformen
 
 ### Standard-Docker
