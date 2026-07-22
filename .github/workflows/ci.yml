@@ -17,6 +17,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      MAIN_DIRECTORY: /tmp/stalker-client-test
+      CONFIG_FILE: /tmp/stalker-client-test/portal-einstellungen.json
+      SECRET_FILE: /tmp/stalker-client-test/.stalker-geheimnis
+      LOG_FILE: /tmp/stalker-client-test/stalker-client.log
 
     steps:
       - name: Repository auschecken
