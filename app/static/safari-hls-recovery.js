@@ -1,11 +1,20 @@
 (() => {
   const STALL_SECONDS = 8;
-  const RELOAD_DELAY_MS = 4500;
   const CHECK_INTERVAL_MS = 2000;
 
   function isNativeHlsPlayer(video) {
     const hlsJsActive = window.Hls && Hls.isSupported();
     return !hlsJsActive && Boolean(video.canPlayType('application/vnd.apple.mpegurl'));
+  }
+
+  function ticketFromSource(source) {
+    try {
+      const url = new URL(source, window.location.href);
+      const match = url.pathname.match(/^\/hls\/([^/]+)\/index\.m3u8$/);
+      return match ? match[1] : '';
+    } catch (_) {
+      return '';
+    }
   }
 
   function installRecovery() {
@@ -16,71 +25,78 @@
     let lastTime = 0;
     let lastProgressAt = performance.now();
     let recovering = false;
-    let reloadTimer = null;
-    let reloads = 0;
-    let reloadWindowStartedAt = performance.now();
+    let refreshes = 0;
+    let refreshWindowStartedAt = performance.now();
 
     const markProgress = () => {
       lastTime = video.currentTime || 0;
       lastProgressAt = performance.now();
       recovering = false;
-      if (reloadTimer) {
-        clearTimeout(reloadTimer);
-        reloadTimer = null;
+      if (meta && meta.textContent === 'Safari wechselt auf eine neue Live-Session …') {
+        meta.textContent = '';
       }
     };
 
-    const jumpToLiveEdge = () => {
-      if (!video.seekable || video.seekable.length === 0) return false;
-      const end = video.seekable.end(video.seekable.length - 1);
-      if (!Number.isFinite(end)) return false;
-      const target = Math.max(0, end - 1.5);
-      if (Math.abs((video.currentTime || 0) - target) > 0.5) video.currentTime = target;
-      return true;
-    };
-
-    const reloadNativeStream = () => {
+    const switchToFreshSession = async () => {
       const now = performance.now();
-      if (now - reloadWindowStartedAt > 60000) {
-        reloadWindowStartedAt = now;
-        reloads = 0;
+      if (now - refreshWindowStartedAt > 120000) {
+        refreshWindowStartedAt = now;
+        refreshes = 0;
       }
-      if (reloads >= 3 || !video.currentSrc) {
+      if (refreshes >= 3) {
         if (meta) meta.textContent = 'Safari konnte den Live-Stream nicht automatisch fortsetzen. Bitte den Sender erneut öffnen.';
         recovering = false;
         return;
       }
-      reloads += 1;
-      const source = new URL(video.currentSrc, window.location.href);
-      source.searchParams.set('_safari_recover', String(Date.now()));
-      video.src = source.href;
-      video.load();
-      video.play().catch(() => {});
-      lastProgressAt = performance.now();
+
+      const ticket = ticketFromSource(video.currentSrc || video.src);
+      if (!ticket) {
+        recovering = false;
+        return;
+      }
+
+      refreshes += 1;
+      if (meta) meta.textContent = 'Safari wechselt auf eine neue Live-Session …';
+
+      try {
+        const response = await fetch(`/api/live-refresh/${encodeURIComponent(ticket)}`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          cache: 'no-store'
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        if (!payload.url) throw new Error('Keine neue Stream-URL erhalten');
+
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.src = `${payload.url}?_safari_session=${Date.now()}`;
+        video.load();
+        await video.play().catch(() => {});
+        lastProgressAt = performance.now();
+      } catch (error) {
+        console.warn('Safari Live-Session konnte nicht erneuert werden:', error);
+        if (meta) meta.textContent = 'Neue Live-Session fehlgeschlagen. Bitte den Sender erneut öffnen.';
+        recovering = false;
+      }
     };
 
     const recover = () => {
       if (recovering || video.paused || video.ended || !video.currentSrc) return;
       recovering = true;
-      if (meta) meta.textContent = 'Safari verbindet den Live-Stream neu …';
-      jumpToLiveEdge();
-      video.play().catch(() => {});
-      reloadTimer = setTimeout(() => {
-        const stalledFor = (performance.now() - lastProgressAt) / 1000;
-        if (stalledFor >= STALL_SECONDS) reloadNativeStream();
-        else recovering = false;
-      }, RELOAD_DELAY_MS);
+      switchToFreshSession();
     };
 
     video.addEventListener('playing', markProgress);
     video.addEventListener('timeupdate', () => {
       const current = video.currentTime || 0;
-      if (current > lastTime + 0.2) {
-        if (meta && meta.textContent === 'Safari verbindet den Live-Stream neu …') meta.textContent = '';
-        markProgress();
-      }
+      if (current > lastTime + 0.2) markProgress();
     });
-    video.addEventListener('waiting', recover);
+    video.addEventListener('waiting', () => {
+      const stalledFor = (performance.now() - lastProgressAt) / 1000;
+      if (stalledFor >= STALL_SECONDS) recover();
+    });
     video.addEventListener('stalled', recover);
 
     setInterval(() => {
