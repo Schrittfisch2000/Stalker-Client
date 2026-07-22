@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.9 – getrennte Docker-Varianten für Desktop und UGREEN**
+**Aktuelle Version: 1.0.11 – sauberer Docker-Build für Standard und UGREEN**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
 
@@ -188,6 +188,18 @@ docker compose -f deploy/ugreen/docker-compose.yml up -d --build
 - Den Ordner `konfiguration` regelmäßig sichern.
 
 ## Versionsverlauf
+
+### 1.0.11
+
+- Docker-Build läuft ohne interaktive `debconf`-Frontend-Warnungen
+- `pip`-Root-Warnung und Versionshinweis werden im Container-Build unterdrückt
+- Gemeinsames Dockerfile bleibt für Standard- und UGREEN-Installation erhalten
+
+### 1.0.10
+
+- Proaktive Erneuerung des Live-TV-Portal-Tokens
+- Fortlaufende HLS-Segmentnummern bei FFmpeg-Neustarts
+- Verbesserte Safari-Stabilität bei länger laufenden Live-Streams
 
 ### 1.0.9
 
