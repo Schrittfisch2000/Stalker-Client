@@ -2,18 +2,18 @@ name: stalker-client-deutsch
 
 services:
   stalker-client:
-    image: stalker-client-deutsch:1.0.8-ugreen
+    image: stalker-client-deutsch:1.0.9
     build:
       context: .
       labels:
         de.stalker-client.beschreibung: "Deutscher Web-Client für Stalker- und MAG-Portale"
-        de.stalker-client.version: "1.0.8"
-        de.stalker-client.plattform: "UGREEN UGOS Pro"
+        de.stalker-client.version: "1.0.9"
+        de.stalker-client.plattform: "Docker Desktop und Docker Engine"
     container_name: stalker-client-deutsch
     hostname: stalker-client-deutsch
     restart: unless-stopped
     environment:
-      TZ: Europe/Berlin
+      TZ: ${TZ:-Europe/Berlin}
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
       MAIN_DIRECTORY: /konfiguration
@@ -23,11 +23,7 @@ services:
     volumes:
       - ./konfiguration:/konfiguration
     ports:
-      - "8080:8080"
-    labels:
-      de.stalker-client.name: "Stalker Client Deutsch"
-      de.stalker-client.beschreibung: "Live-TV, Filme und Serien in deutscher Oberfläche"
-      de.stalker-client.verwaltung: "UGREEN Docker Compose"
+      - "${STALKER_PORT:-8080}:8080"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s
