@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 
 from .config import Settings, get_settings
 from .stalker import PortalError, StalkerClient
@@ -63,7 +63,7 @@ def _absolute_image_url(value: Any, settings: Settings) -> str | None:
     source = str(value or "").strip()
     if not source or len(source) > 4096:
         return None
-    if source.startswith("/api/image/"):
+    if source.startswith("/api/image?ticket="):
         return source
     absolute = urljoin(f"{settings.portal_url.rstrip('/')}/", source)
     parsed = urlparse(absolute)
@@ -96,7 +96,7 @@ def read_image_ticket(ticket: str, settings: Settings, *, now: int | None = None
         if str(data["p"]) != _portal_identity(settings):
             raise ValueError("portal")
         url = _absolute_image_url(data["u"], settings)
-        if not url or url.startswith("/api/image/"):
+        if not url or url.startswith("/api/image?ticket="):
             raise ValueError("url")
         return url
     except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -113,19 +113,29 @@ def attach_image_proxies(value: Any, settings: Settings) -> Any:
     source = next((value.get(field) for field in IMAGE_FIELDS if str(value.get(field) or "").strip()), None)
     absolute = _absolute_image_url(source, settings)
     if absolute:
-        if absolute.startswith("/api/image/"):
+        if absolute.startswith("/api/image?ticket="):
             result["image_proxy"] = absolute
         else:
-            result["image_proxy"] = f"/api/image/{create_image_ticket(absolute, settings)}"
+            result["image_proxy"] = f"/api/image?ticket={create_image_ticket(absolute, settings)}"
     return result
+
+
+def _effective_port(url: str) -> int:
+    parsed = urlparse(url)
+    return parsed.port or (443 if parsed.scheme == "https" else 80)
 
 
 def _portal_host(settings: Settings) -> str:
     return (urlparse(settings.portal_url).hostname or "").casefold()
 
 
-def _same_portal_host(url: str, settings: Settings) -> bool:
-    return (urlparse(url).hostname or "").casefold() == _portal_host(settings)
+def _trusted_portal_target(url: str, settings: Settings) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").casefold()
+    if host != _portal_host(settings):
+        return False
+    configured_port = _effective_port(settings.portal_url)
+    return _effective_port(url) in {configured_port, 80, 443}
 
 
 def _address_is_public(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -147,14 +157,13 @@ async def _validate_target(url: str, settings: Settings) -> None:
         raise HTTPException(status_code=403, detail="Bildziel ist nicht erlaubt")
 
     hostname = parsed.hostname.casefold()
-    if hostname == _portal_host(settings):
+    if _trusted_portal_target(url, settings):
         return
     if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
         raise HTTPException(status_code=403, detail="Lokale Bildziele sind nicht erlaubt")
 
     try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        records = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, port, 0, socket.SOCK_STREAM)
+        records = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname, _effective_port(url), 0, socket.SOCK_STREAM)
         addresses = {
             ipaddress.ip_address(record[4][0].split("%", 1)[0])
             for record in records
@@ -166,15 +175,14 @@ async def _validate_target(url: str, settings: Settings) -> None:
         raise HTTPException(status_code=403, detail="Private oder lokale Bildziele sind nicht erlaubt")
 
 
-def _request_headers(url: str, settings: Settings, portal: StalkerClient, authenticated: bool) -> tuple[dict[str, str], dict[str, str]]:
-    if _same_portal_host(url, settings):
+def _request_headers(url: str, settings: Settings, portal: StalkerClient) -> tuple[dict[str, str], dict[str, str]]:
+    if _trusted_portal_target(url, settings):
         headers = dict(portal.headers)
         headers["Accept"] = "image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.5"
         return headers, portal.cookies
     return {
         "Accept": "image/avif,image/webp,image/png,image/jpeg,image/gif,*/*;q=0.5",
         "User-Agent": "Mozilla/5.0 Stalker-Client-Image-Proxy",
-        "Referer": f"{settings.portal_url.rstrip('/')}/c/",
     }, {}
 
 
@@ -206,8 +214,8 @@ async def _download_image(url: str, settings: Settings) -> tuple[bytes, str]:
 
     for redirect_count in range(MAX_REDIRECTS + 1):
         await _validate_target(current, settings)
-        headers, cookies = _request_headers(current, settings, portal, authenticated)
-        verify_tls = settings.verify_tls if _same_portal_host(current, settings) else True
+        headers, cookies = _request_headers(current, settings, portal)
+        verify_tls = settings.verify_tls if _trusted_portal_target(current, settings) else True
         timeout = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
 
         try:
@@ -218,7 +226,7 @@ async def _download_image(url: str, settings: Settings) -> tuple[bytes, str]:
                 trust_env=False,
             ) as client:
                 async with client.stream("GET", current, headers=headers, cookies=cookies) as response:
-                    if response.status_code in {401, 403} and _same_portal_host(current, settings) and not authenticated:
+                    if response.status_code in {401, 403} and _trusted_portal_target(current, settings) and not authenticated:
                         await portal.handshake()
                         authenticated = True
                         continue
@@ -262,8 +270,8 @@ async def _download_image(url: str, settings: Settings) -> tuple[bytes, str]:
 
 
 async def image_response(
-    ticket: str,
     request: Request,
+    ticket: str = Query(min_length=20, max_length=8192),
     settings: Settings = Depends(settings_dependency),
 ) -> Response:
     url = read_image_ticket(ticket, settings)
@@ -306,6 +314,6 @@ def _patch_json_routes(app: FastAPI) -> None:
 
 
 def install(app: FastAPI) -> None:
-    if not any(getattr(route, "path", None) == "/api/image/{ticket}" for route in app.routes):
-        app.add_api_route("/api/image/{ticket}", image_response, methods=["GET"])
+    if not any(getattr(route, "path", None) == "/api/image" for route in app.routes):
+        app.add_api_route("/api/image", image_response, methods=["GET"])
     _patch_json_routes(app)
