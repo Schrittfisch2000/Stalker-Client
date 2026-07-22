@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.24 – dauerhafter TS-Proxy für Live-TV**
+**Aktuelle Version: 1.0.25 – normalisierte MPEG-TS-Zeitachse bei Live-TV**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
 
@@ -23,12 +23,14 @@ Beide Varianten verwenden dasselbe Dockerfile und dieselbe Anwendung. Nur die Co
 
 ## Dauerhafter TS-Proxy für Live-TV
 
-Seit Version 1.0.24 wird bei Live-TV nicht mehr regelmäßig der Browserplayer oder die FFmpeg-HLS-Sitzung ausgetauscht. Stattdessen läuft eine dauerhafte Pipeline:
+Seit Version 1.0.24 läuft bei Live-TV eine dauerhafte Pipeline. Version 1.0.25 normalisiert zusätzlich die MPEG-TS-Zeitachse beim Wechsel auf einen frischen Portal-Token:
 
 ```text
 Stalker-Portal
       ↓
 Dauerhafter MPEG-TS-Proxy
+      ↓
+Zeitachsen-Normalisierung und Keyframe-Wechsel
       ↓
 Eine laufende FFmpeg-Instanz
       ↓
@@ -37,7 +39,7 @@ Eine fortlaufende HLS-Playlist
 Ein unveränderter Browserplayer
 ```
 
-Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Sobald sie bereit ist, wird nur die Eingangsverbindung des Proxys gewechselt. FFmpeg bleibt dabei aktiv und erzeugt weiterhin dieselbe HLS-Zeitachse und dieselbe Playlist.
+Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Die Ersatzverbindung wird bis zu einem zufälligen Zugriffspunkt beziehungsweise Keyframe vorgewärmt. Beim Wechsel werden PTS, DTS und PCR auf die laufende Ausgabezeitachse verschoben, Continuity Counter je PID fortgeführt und die zuletzt bekannten PAT-/PMT-Pakete erneut ausgegeben.
 
 Wichtige Eigenschaften:
 
@@ -45,8 +47,11 @@ Wichtige Eigenschaften:
 - FFmpeg wird beim normalen Tokenwechsel nicht neu gestartet.
 - Die Ersatzverbindung wird vorbereitet, während die alte Verbindung noch Daten liefert.
 - MPEG-TS-Daten werden an 188-Byte-Paketgrenzen ausgerichtet.
-- FFmpeg erzeugt aus der dauerhaften Pipe neue Zeitstempel anhand der laufenden Systemzeit.
-- Der bisherige Dual-Player-Handover ist deaktiviert.
+- Der Wechsel erfolgt bevorzugt an einem Keyframe bzw. Random-Access-Punkt.
+- PTS, DTS und PCR werden auf eine fortlaufende Zeitachse verschoben.
+- Continuity Counter werden pro PID durchgehend neu vergeben.
+- PAT und PMT werden am Umschaltpunkt erneut eingespeist.
+- Der bisherige Dual-Player-Handover bleibt deaktiviert.
 
 Kurzzeitig bestehen zwei Portalverbindungen, aber nur eine FFmpeg-Instanz und eine HLS-Sitzung.
 
@@ -219,11 +224,11 @@ Bei einem erfolgreichen Live-Start erscheinen unter anderem folgende Meldungen:
 
 ```text
 FFmpeg-HLS mit dauerhaftem TS-Proxy gestartet
-Dauerhafter TS-Proxy verbunden
-TS-Proxy nahtlos auf frischen Portal-Token gewechselt
+Dauerhafter TS-Proxy mit Zeitachsen-Normalisierung verbunden
+TS-Proxy auf normalisierter Zeitachse gewechselt
 ```
 
-Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplayer nicht ersetzt werden.
+Die Wechselmeldung enthält zusätzlich, ob ein Keyframe gefunden wurde und wie viele vorgewärmte TS-Pakete übernommen wurden. Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplayer nicht ersetzt werden.
 
 ## Sicherheit
 
@@ -233,6 +238,15 @@ Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplay
 - Den Ordner `konfiguration` regelmäßig sichern.
 
 ## Versionsverlauf
+
+### 1.0.25
+
+- PTS-/DTS-Normalisierung beim Wechsel der Portalverbindung
+- PCR-Verschiebung auf die fortlaufende Ausgabezeitachse
+- Durchgehende MPEG-TS-Continuity-Counter pro PID
+- Vorgewärmte Ersatzverbindung mit bevorzugtem Wechsel am Keyframe
+- Erneute Ausgabe der zuletzt bekannten PAT- und PMT-Pakete
+- Zusätzliche Diagnosewerte für Keyframe-Erkennung und Vorpuffer
 
 ### 1.0.24
 
