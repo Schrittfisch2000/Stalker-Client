@@ -1,6 +1,6 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.11 – sauberer Docker-Build für Standard und UGREEN**
+**Aktuelle Version: 1.0.22 – gepufferter Dual-Player-Handover für Live-TV**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
 
@@ -20,6 +20,17 @@ Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portal
 - DXP8800 Plus und vergleichbare UGREEN-NAS-Systeme
 
 Beide Varianten verwenden dasselbe Dockerfile und dieselbe Anwendung. Nur die Compose-Dateien und Installationshinweise unterscheiden sich.
+
+## Live-TV-Handover
+
+Live-TV-Sitzungen mit kurzlebigen Portal-Tokens werden im Browser vorbereitet, bevor die aktive Sitzung endet. Seit Version 1.0.22 verwendet Firefox/Hls.js dafür zwei Player:
+
+- Der aktive Player läuft unverändert weiter.
+- Eine neue Live-Sitzung wird parallel in einem ausgeblendeten Ersatzplayer geladen.
+- Die Übergabe erfolgt erst, wenn der Ersatzplayer läuft und mindestens drei Sekunden Puffer besitzt.
+- Erst danach werden der alte Player und die alte FFmpeg-Sitzung beendet.
+
+Dadurch soll beim regelmäßigen Token- und Session-Wechsel weder ein leerer Player noch ein sichtbarer Neustart entstehen. Während der Vorbereitung laufen kurzzeitig zwei FFmpeg-Sitzungen parallel.
 
 ## Projektstruktur
 
@@ -169,7 +180,8 @@ Standard-Docker:
 ```bash
 git pull
 docker compose down
-docker compose up -d --build
+docker compose build --no-cache
+docker compose up -d
 ```
 
 UGREEN:
@@ -177,8 +189,11 @@ UGREEN:
 ```bash
 git pull
 docker compose -f deploy/ugreen/docker-compose.yml down
-docker compose -f deploy/ugreen/docker-compose.yml up -d --build
+docker compose -f deploy/ugreen/docker-compose.yml build --no-cache
+docker compose -f deploy/ugreen/docker-compose.yml up -d
 ```
+
+Nach einem Frontend-Update den Browser mit `Strg + F5` beziehungsweise `Cmd + Shift + R` vollständig neu laden.
 
 ## Sicherheit
 
@@ -188,6 +203,30 @@ docker compose -f deploy/ugreen/docker-compose.yml up -d --build
 - Den Ordner `konfiguration` regelmäßig sichern.
 
 ## Versionsverlauf
+
+### 1.0.22
+
+- Paralleler, ausgeblendeter Ersatzplayer für Live-TV-Handover
+- Übergabe erst nach laufender Wiedergabe und mindestens drei Sekunden Browserpuffer
+- Aktiver Player bleibt während der kompletten Vorbereitung unangetastet
+- Alte Hls.js- und FFmpeg-Sitzung wird erst nach erfolgreicher Übergabe beendet
+- Playerdiagnose bindet sich nach einem Playerwechsel automatisch neu
+
+### 1.0.21
+
+- Einstieg neuer Hls.js-Sitzungen näher am Live-Rand
+- Weniger sichtbare Wiederholung beim Wechsel zwischen Live-Sitzungen
+
+### 1.0.20
+
+- Vorgewärmte Ersatzsessions mit acht HLS-Segmenten
+- Browserverwalteter Live-Handover mit aktiver Freigabe alter Sitzungen
+- Verhinderung interner Neustarts beendeter Handover-Sitzungen
+
+### 1.0.19
+
+- System- und Browserdiagnose für Live-TV-Probleme
+- Protokollierung von Playerzustand, Puffer und laufenden FFmpeg-Sitzungen
 
 ### 1.0.11
 
