@@ -14,6 +14,7 @@
         body: JSON.stringify({
           type: mediaType,
           cmd,
+          category: item.category || state.category,
           series,
           item,
           title: item.download_title || titleOf(item),
@@ -73,6 +74,7 @@
         ...seriesItem,
         ...seasonItem,
         type: 'series',
+        category: seriesItem.category || state.category,
         name: label,
         title: label,
         episode_name: label,
@@ -150,6 +152,7 @@
         const downloadableEntry = {
           ...entry,
           type: 'series',
+          category: currentSeries.category || state.category,
           download_title: `${titleOf(currentSeries) || heading || 'Serie'} - ${titleOf(entry)}`,
         };
         appendEpisodeRow(downloadableEntry, seriesValue);
@@ -176,7 +179,7 @@
     button.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      startDownload({ ...item, type: 'vod' });
+      startDownload({ ...item, type: 'vod', category: item.category || state.category });
     });
     card.querySelector('.card-body')?.append(button);
     return card;
@@ -187,7 +190,7 @@
   openSeries = async function openSeriesWithDownloads(item) {
     const id = cleanId(item.movie_id || item.series_id || item.id);
     if (!id) return showMessage('Keine Serien-ID vorhanden.');
-    state.currentSeriesItem = item;
-    await renderSeriesLevelWithDownloads(id, null, titleOf(item), item, null);
+    state.currentSeriesItem = { ...item, category: item.category || state.category };
+    await renderSeriesLevelWithDownloads(id, null, titleOf(item), state.currentSeriesItem, null);
   };
 })();
