@@ -1,10 +1,10 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.26 – konsistente Versionsangaben und Deployment-Tags**
+**Aktuelle Version: 1.0.27 – stabilere Live-TV-Wechsel und Downloads für Filme und Serien**
 
-Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten und Wiedergabefortschritt.
+Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten, Wiedergabefortschritt und Downloads von Filmen und Episoden.
 
-> Verwende den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt.
+> Verwende den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt. Lade nur Inhalte herunter, deren Speicherung durch deinen Anbieter und die geltenden Nutzungsbedingungen erlaubt ist.
 
 ## Unterstützte Plattformen
 
@@ -23,14 +23,16 @@ Beide Varianten verwenden dasselbe Dockerfile und dieselbe Anwendung. Nur die Co
 
 ## Dauerhafter TS-Proxy für Live-TV
 
-Seit Version 1.0.24 läuft bei Live-TV eine dauerhafte Pipeline. Version 1.0.25 normalisiert zusätzlich die MPEG-TS-Zeitachse beim Wechsel auf einen frischen Portal-Token:
+Seit Version 1.0.24 läuft bei Live-TV eine dauerhafte Pipeline. Version 1.0.25 führte die MPEG-TS-Zeitachsen-Normalisierung ein. Version 1.0.27 richtet beim Wechsel Video-PTS/DTS, Audio-PTS und PCR getrennt auf die laufenden Ausgabeuhren aus und führt den vorgewärmten Ersatzstrom bis zum aktuellen Bild nach:
 
 ```text
 Stalker-Portal
       ↓
 Dauerhafter MPEG-TS-Proxy
       ↓
-Zeitachsen-Normalisierung und Keyframe-Wechsel
+Getrennte Video-, Audio- und PCR-Zeitachsen
+      ↓
+Keyframe-Wechsel am aktuellen Live-Bild
       ↓
 Eine laufende FFmpeg-Instanz
       ↓
@@ -39,21 +41,47 @@ Eine fortlaufende HLS-Playlist
 Ein unveränderter Browserplayer
 ```
 
-Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Die Ersatzverbindung wird bis zu einem zufälligen Zugriffspunkt beziehungsweise Keyframe vorgewärmt. Beim Wechsel werden PTS, DTS und PCR auf die laufende Ausgabezeitachse verschoben, Continuity Counter je PID fortgeführt und die zuletzt bekannten PAT-/PMT-Pakete erneut ausgegeben.
+Der Proxy öffnet frühzeitig eine zweite Portalverbindung mit einem frischen Token. Die Ersatzverbindung wird bis zu einem zufälligen Zugriffspunkt beziehungsweise Keyframe vorgewärmt. Vor der Übergabe wird sie bis zum aktuellen Bild der bisherigen Verbindung nachgeführt. Beim Wechsel werden die Zeitstempel je Medien-PID und die PCR-Uhr getrennt verschoben, Continuity Counter je PID fortgeführt und die zuletzt bekannten PAT-/PMT-Pakete erneut ausgegeben.
 
 Wichtige Eigenschaften:
 
 - Der Browserplayer wird beim Tokenwechsel nicht ersetzt.
 - FFmpeg wird beim normalen Tokenwechsel nicht neu gestartet.
 - Die Ersatzverbindung wird vorbereitet, während die alte Verbindung noch Daten liefert.
+- Der Ersatzstrom wird vor der Übergabe bis zum aktuellen Video-PTS nachgeführt.
 - MPEG-TS-Daten werden an 188-Byte-Paketgrenzen ausgerichtet.
-- Der Wechsel erfolgt bevorzugt an einem Keyframe bzw. Random-Access-Punkt.
-- PTS, DTS und PCR werden auf eine fortlaufende Zeitachse verschoben.
+- Der Wechsel erfolgt bevorzugt an einem Keyframe beziehungsweise Random-Access-Punkt.
+- Video-PTS/DTS, Audio-PTS und PCR werden unabhängig auf fortlaufende Zeitachsen verschoben.
+- Ein größerer Paketkontext überträgt Audio- und PCR-Anker zuverlässig mit dem Keyframe.
 - Continuity Counter werden pro PID durchgehend neu vergeben.
 - PAT und PMT werden am Umschaltpunkt erneut eingespeist.
+- Ein Lese-Watchdog erneuert eine hängende Portalverbindung.
 - Der bisherige Dual-Player-Handover bleibt deaktiviert.
 
 Kurzzeitig bestehen zwei Portalverbindungen, aber nur eine FFmpeg-Instanz und eine HLS-Sitzung.
+
+## Downloads für Filme und Serien
+
+Bei Filmen erscheint auf der Medienkarte eine Schaltfläche **Download**. Bei Serien besitzt jede abspielbare Episode eine eigene Download-Schaltfläche.
+
+Der Ablauf:
+
+```text
+Portalstream
+      ↓
+FFmpeg-Remux ohne Neucodierung
+      ↓
+Matroska-Datei (.mkv)
+      ↓
+Browser-Download
+```
+
+- Downloads sind nur für `vod` und `series` verfügbar, nicht für Live-TV.
+- Video, Audiospuren und vorhandene Untertitel werden ohne Qualitätsverlust in einen MKV-Container übernommen.
+- Die Datei wird direkt an den Browser gestreamt und nicht dauerhaft im Container oder im Konfigurationsordner gespeichert.
+- Maximal zwei Downloads laufen gleichzeitig, damit NAS und Portal nicht unkontrolliert belastet werden.
+- Die normalen Benutzer- und Portalzuweisungen gelten auch für Downloads.
+- Die Funktion umgeht keine Verschlüsselung und keine DRM-Schutzmaßnahmen.
 
 ## Projektstruktur
 
@@ -224,11 +252,12 @@ Bei einem erfolgreichen Live-Start erscheinen unter anderem folgende Meldungen:
 
 ```text
 FFmpeg-HLS mit dauerhaftem TS-Proxy gestartet
-Dauerhafter TS-Proxy mit Zeitachsen-Normalisierung verbunden
-TS-Proxy auf normalisierter Zeitachse gewechselt
+Dauerhafter TS-Proxy mit Mehrfach-Zeitachsen verbunden
+TS-Proxy-Ersatzstrom bis zum aktuellen Bild nachgeführt
+TS-Proxy mit getrennten Medienuhren gewechselt
 ```
 
-Die Wechselmeldung enthält zusätzlich, ob ein Keyframe gefunden wurde und wie viele vorgewärmte TS-Pakete übernommen wurden. Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplayer nicht ersetzt werden.
+Die Wechselmeldung enthält die Anzahl der übernommenen TS-Pakete sowie Video-, Audio- und PCR-Anker. Beim Tokenwechsel sollte kein neuer FFmpeg-Prozess gestartet und der Browserplayer nicht ersetzt werden.
 
 ## Sicherheit
 
@@ -236,8 +265,20 @@ Die Wechselmeldung enthält zusätzlich, ob ein Keyframe gefunden wurde und wie 
 - Die Anwendung nicht ungeschützt ins öffentliche Internet stellen.
 - Für externen Zugriff einen Reverse Proxy mit HTTPS und zusätzlicher Zugriffskontrolle verwenden.
 - Den Ordner `konfiguration` regelmäßig sichern.
+- Downloads ausschließlich für Inhalte verwenden, deren lokale Speicherung erlaubt ist.
 
 ## Versionsverlauf
+
+### 1.0.27
+
+- Ersatzverbindung wird vor dem Wechsel bis zum aktuellen Live-Bild nachgeführt
+- Separate Zeitachsenkorrektur für Video, Audio und PCR
+- Größerer Wechselkontext für zuverlässige Audio- und PCR-Anker
+- Lese-Watchdog für hängende Portalverbindungen
+- Sauberes Beenden von TS-Proxy, FFmpeg und HLS-Ordnern
+- Download-Schaltflächen für Filme und einzelne Serienepisoden
+- Verlustfreies Remuxen autorisierter Inhalte als MKV ohne Neucodierung
+- Durchgängige Versionsanzeige und Docker-Tags für 1.0.27
 
 ### 1.0.26
 
