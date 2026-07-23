@@ -12,7 +12,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Europe/Berlin \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    MAIN_DIRECTORY=/konfiguration
+    MAIN_DIRECTORY=/konfiguration \
+    CONFIG_FILE=/konfiguration/portal-einstellungen.json \
+    SECRET_FILE=/konfiguration/.stalker-geheimnis \
+    LOG_FILE=/konfiguration/stalker-client.log
 
 WORKDIR /anwendung
 

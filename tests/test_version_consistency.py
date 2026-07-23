@@ -16,6 +16,8 @@ REMOVED_LEGACY_FILES = (
     "deploy/ugreen/docker-compose.yml",
     "CHANGELOG-1.0.30.md",
     "RELEASE-1.0.30.md",
+    "CHANGELOG-1.0.31.md",
+    "RELEASE-1.0.31.md",
     "docs/DOCKER-HUB-UPDATE.md",
 )
 
@@ -40,6 +42,7 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertIn("Installation auf macOS", readme)
         self.assertIn("Installation auf Raspberry Pi", readme)
         self.assertIn("Installation auf Windows", readme)
+        self.assertIn("UGREEN-Installation direkt aus dem Docker-Hub-Repository", readme)
         self.assertIn("linux/amd64", readme)
         self.assertIn("linux/arm64", readme)
         self.assertIn(OFFICIAL_IMAGE, readme)
@@ -63,6 +66,20 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertIn("pull_policy: always", compose)
         self.assertIn("./konfiguration:/konfiguration", compose)
         self.assertNotIn("\n    build:", compose)
+
+    def test_repository_image_defaults_use_writable_configuration_directory(self) -> None:
+        dockerfile = self.read("Dockerfile")
+        storage = self.read("app/storage.py")
+        logging_config = self.read("app/logging_config.py")
+
+        self.assertIn("MAIN_DIRECTORY=/konfiguration", dockerfile)
+        self.assertIn("CONFIG_FILE=/konfiguration/portal-einstellungen.json", dockerfile)
+        self.assertIn("SECRET_FILE=/konfiguration/.stalker-geheimnis", dockerfile)
+        self.assertIn("LOG_FILE=/konfiguration/stalker-client.log", dockerfile)
+        self.assertIn('os.getenv("MAIN_DIRECTORY", "/konfiguration")', storage)
+        self.assertIn('os.getenv("LOG_FILE", "/konfiguration/stalker-client.log")', logging_config)
+        self.assertNotIn("/config/stalker-client.log", logging_config)
+        self.assertNotIn("/hauptordner", storage)
 
     def test_obsolete_files_are_removed(self) -> None:
         for relative_path in REMOVED_LEGACY_FILES:

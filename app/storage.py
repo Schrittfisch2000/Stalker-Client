@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-MAIN_DIRECTORY = Path(os.getenv("MAIN_DIRECTORY", "/hauptordner"))
+MAIN_DIRECTORY = Path(os.getenv("MAIN_DIRECTORY", "/konfiguration"))
 
 
 def data_file(name: str) -> Path:
