@@ -80,8 +80,149 @@ jobs:
     name: Docker Hub veröffentlichen
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       issues: write
-    uses: ./.github/workflows/docker-publish.yml
-    secrets: inherit
+    env:
+      IMAGE_NAME: schrittfisch2000/stalker-client
+      REPORT_ISSUE: "19"
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Veröffentlichung gestartet melden
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "$REPORT_ISSUE" --body "🚀 Docker-Release gestartet. Actions-Lauf: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Docker-Hub-Zugang prüfen
+        shell: bash
+        env:
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "::error::Docker-Hub-Zugangsdaten fehlen oder sind für GitHub Actions nicht verfügbar."
+            exit 1
+          fi
+
+      - name: Release-Version ermitteln
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Ungültige VERSION: $VERSION"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bei Docker Hub anmelden
+        if: steps.version.outputs.tag_exists == 'false'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: QEMU einrichten
+        if: steps.version.outputs.tag_exists == 'false'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Docker Buildx einrichten
+        if: steps.version.outputs.tag_exists == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Multi-Arch-Image bauen und veröffentlichen
+        if: steps.version.outputs.tag_exists == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.title=Stalker Client
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Git-Tag erstellen
+        if: steps.version.outputs.tag_exists == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$GITHUB_SHA" -m "Stalker Client $VERSION"
+          git push origin "$TAG"
+
+      - name: GitHub Release erstellen
+        if: steps.version.outputs.release_exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          RELEASE_NOTES="RELEASE-${VERSION}.md"
+          if [[ -f "$RELEASE_NOTES" ]]; then
+            gh release create "$TAG" --verify-tag --title "Stalker Client ${VERSION}" --notes-file "$RELEASE_NOTES"
+          else
+            gh release create "$TAG" --verify-tag --title "Stalker Client ${VERSION}" --generate-notes
+          fi
+
+      - name: Veröffentlichung erfolgreich melden
+        if: success()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh issue comment "$REPORT_ISSUE" --body "✅ Docker-Release ${TAG} erfolgreich. Actions-Lauf: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Veröffentlichung fehlgeschlagen melden
+        if: failure()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
+          [[ -n "$VERSION" ]] || VERSION="unbekannt"
+          gh issue comment "$REPORT_ISSUE" --body "❌ Docker-Release v${VERSION} fehlgeschlagen. Actions-Lauf: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
