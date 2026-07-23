@@ -68,7 +68,9 @@
     const seekable = playback.seekable === true || playback.seekable === 'true';
     const customControls = !isLive && duration > 0 && seekable;
     $('vodControls').hidden = !customControls;
+    video.toggleAttribute('controls', !customControls);
     video.controls = !customControls;
+    video.dataset.knownDuration = duration ? String(duration) : '';
     updateControls();
   };
 

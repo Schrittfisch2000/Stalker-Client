@@ -22,6 +22,8 @@ REMOVED_LEGACY_FILES = (
     "RELEASE-1.0.32.md",
     "CHANGELOG-1.0.33.md",
     "RELEASE-1.0.33.md",
+    "CHANGELOG-1.0.34.md",
+    "RELEASE-1.0.34.md",
     "docs/DOCKER-HUB-UPDATE.md",
 )
 
