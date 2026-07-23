@@ -1,45 +1,47 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.28 – stabilere Medienwechsel und korrekte Serienepisoden**
+**Aktuelle Version: 1.0.29 – sicherer HTTPS-Bildproxy und schneller große Kataloge**
 
-Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Die Anwendung unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten, Wiedergabefortschritt und Downloads von Filmen und Episoden.
+Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten, Wiedergabefortschritt und Downloads.
 
-> Verwende den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt. Lade nur Inhalte herunter, deren Speicherung durch deinen Anbieter und die geltenden Nutzungsbedingungen erlaubt ist.
+> Verwende den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt.
 
-## Status von Version 1.0.28
+## Neu in Version 1.0.29
 
-Version 1.0.28 wurde manuell auf einem Mac mit Apple Silicon, Docker Desktop und Firefox getestet.
+- sicherer Same-Origin-Bildproxy für HTTPS- und Reverse-Proxy-Zugriff
+- Senderlogos und Poster funktionieren auch über eine HTTPS-Domain, wenn das Portal Bilder nur per HTTP anbietet
+- signierte Bild-Tickets, Portalbindung und Schutz vor offenen SSRF-Proxys
+- fremde private, lokale und reservierte Ziele werden blockiert
+- maximal 5 MiB pro Bild, begrenzte Weiterleitungen und erlaubte Rasterbildformate
+- sicherer DOM-Renderer ohne ungeprüfte Portalwerte in `innerHTML`
+- große Kataloge werden blockweise dargestellt
+- zunächst höchstens 72 Karten; weitere Inhalte über **Mehr anzeigen**
+- Bilder laden erst in der Nähe des sichtbaren Bereichs
+- Schutz vor tausenden gleichzeitigen Bildanfragen
+- vollständige `.gitignore`- und `.dockerignore`-Regeln für Konfiguration, Geheimnisse und Logs
+- GitHub Actions prüft Secrets, JavaScript-Syntax, Unittests, alle Compose-Dateien und den Docker-Build
 
-Geprüft wurden:
+## Getesteter Stand
 
-- Live-TV über mehrere automatische Portalverbindungswechsel
-- Wechsel von Live-TV zu Filmwiedergabe
-- mehrere Filmstarts nacheinander
-- Auswahl verschiedener Staffeln und Episoden
-- korrekte Zuordnung der ausgewählten Episode zum Portalstream
-- Start eines Episoden-Downloads mit richtigem Dateinamen
-- sauberes Beenden von HLS-, FFmpeg- und Portal-Sitzungen
+Version 1.0.29 wurde nach den Änderungen auf einer UGREEN-NAS über die lokale Adresse und über eine externe HTTPS-Zapto-Domain geprüft. Kategorien, Kataloge und Portalbilder wurden erfolgreich geladen.
 
-Der vollständige Download einer großen Episode wurde im manuellen Test aus Zeitgründen abgebrochen. Start, HTTP-Antwort und Dateiname waren korrekt; ein vollständiger Langzeit-Download wurde damit nicht abschließend verifiziert.
+Die Wiedergabefunktionen aus Version 1.0.28 bleiben enthalten:
 
-Für diesen Stand sind im Repository derzeit keine GitHub-Actions-Workflows eingerichtet. Die Freigabe basiert auf den vorhandenen Regressionstests im Quellcode und dem beschriebenen manuellen Laufzeittest.
+- dauerhafter Live-TV-TS-Proxy
+- stabilere Portalverbindungswechsel
+- frische VOD- und Serienlinks bei erforderlichen Neustarts
+- korrekte Staffel- und Episodenzuordnung
+- Downloads mit passenden Dateinamen
+- sauberes Freigeben vorheriger Wiedergabesitzungen
 
 ## Unterstützte Plattformen
 
-### Standard-Docker
-
 - Windows mit Docker Desktop
 - Linux mit Docker Engine und Docker Compose
-- macOS mit Docker Desktop, Intel und Apple Silicon
+- macOS mit Docker Desktop
+- UGREEN UGOS Pro
 
-### UGREEN NAS
-
-- UGOS Pro
-- DXP8800 Plus und vergleichbare UGREEN-NAS-Systeme
-
-Beide Varianten verwenden dasselbe Dockerfile und dieselbe Anwendung. Für die UGOS-Dockeroberfläche gibt es zusätzlich eine Compose-Datei im Projekt-Hauptordner.
-
-## Schnellstart unter Windows, Linux und macOS
+## Schnellstart mit Docker
 
 ```bash
 git clone https://github.com/Schrittfisch2000/Stalker-Client.git
@@ -48,70 +50,45 @@ mkdir -p konfiguration
 docker compose up -d --build
 ```
 
-Danach ist die Anwendung erreichbar unter:
+Danach:
 
 ```text
 http://localhost:8080
 ```
 
-Nach einem Frontend-Update den Browser vollständig neu laden:
+## Installation auf UGREEN über die Weboberfläche
 
-- Windows/Linux: `Strg + F5`
-- macOS: `Cmd + Shift + R`
+Viele UGREEN-Systeme stellen im Terminal weder `git` noch `curl` oder `wget` bereit.
 
-## Installation auf einer UGREEN-NAS
-
-### Empfohlen: UGOS-Dockeroberfläche ohne Git, curl oder wget
-
-Viele UGREEN-Systeme stellen im Terminal weder `git` noch `curl` oder `wget` bereit. Kopiere deshalb den vollständigen Projektordner von deinem Computer per SMB oder Dateimanager auf die NAS.
-
-Der Ordner auf der NAS muss ungefähr so aussehen:
+1. Repository auf dem Computer über **Code → Download ZIP** herunterladen.
+2. ZIP entpacken.
+3. Den Projektordner per SMB auf die NAS kopieren.
+4. Den bestehenden Ordner `konfiguration` bei Updates behalten.
+5. In UGOS **Docker → Projekte/Compose** öffnen.
+6. Den Hauptordner `Stalker-Client` als Projektordner auswählen.
+7. Diese Compose-Datei aus dem Hauptordner verwenden:
 
 ```text
-Stalker-Client/
-├── Dockerfile
-├── docker-compose.yml
-├── docker-compose-ugreen.yml
-├── app/
-├── deploy/
-└── konfiguration/
+docker-compose-ugreen.yml
 ```
 
-In der UGOS-Dockeroberfläche:
+8. Projekt bauen und starten.
 
-1. Docker aus dem App Center installieren und öffnen.
-2. **Compose** oder **Projekte** auswählen.
-3. Den Hauptordner `Stalker-Client` als Projektordner verwenden.
-4. Als Compose-Datei diese Datei im Hauptordner auswählen:
-
-   ```text
-   docker-compose-ugreen.yml
-   ```
-
-5. Das Projekt bauen und starten.
-
-Danach ist die Anwendung erreichbar unter:
+Danach:
 
 ```text
 http://IP-DER-NAS:8080
 ```
 
-### Wichtig: Nicht die Unterordner-Compose-Datei in UGOS auswählen
+### Wichtig für UGOS
 
-Die Datei `deploy/ugreen/docker-compose.yml` verwendet relative Pfade für den Kommandozeilenbetrieb. Manche UGOS-Versionen kopieren die ausgewählte Compose-Datei intern in einen anderen Ordner. Dann wird der Build-Kontext falsch aufgelöst und Docker sucht beispielsweise hier nach dem Dockerfile:
-
-```text
-/volume2/Dockerfile
-```
-
-Typischer Fehler:
+Nicht `deploy/ugreen/docker-compose.yml` in der Weboberfläche auswählen. Manche UGOS-Versionen verschieben die Compose-Datei intern und lösen `../..` dann falsch auf. Der typische Fehler lautet:
 
 ```text
-unable to prepare context: unable to evaluate symlinks in Dockerfile path:
 lstat /volume2/Dockerfile: no such file or directory
 ```
 
-Für die UGOS-Oberfläche deshalb immer die Datei `docker-compose-ugreen.yml` aus dem Projekt-Hauptordner verwenden. Sie nutzt bewusst:
+Die root-nahe `docker-compose-ugreen.yml` verwendet korrekt:
 
 ```yaml
 build:
@@ -122,260 +99,82 @@ volumes:
   - ./konfiguration:/konfiguration
 ```
 
-### Alternative: Installation über SSH
+## Update auf UGREEN ohne Terminal
 
-Nur verwenden, wenn auf der NAS `git` und Docker Compose verfügbar sind:
+1. Aktuelles ZIP auf dem Computer herunterladen und entpacken.
+2. UGREEN-Projekt stoppen.
+3. Alle Programmdateien im NAS-Projektordner ersetzen.
+4. Den Ordner `konfiguration` nicht löschen oder überschreiben.
+5. Projekt mit `docker-compose-ugreen.yml` neu bauen und starten.
+6. Browser vollständig neu laden: macOS `Cmd + Shift + R`, Windows/Linux `Strg + F5`.
 
-```bash
-cd /volume1/docker
-git clone https://github.com/Schrittfisch2000/Stalker-Client.git
-cd Stalker-Client
-mkdir -p konfiguration
-docker compose -f docker-compose-ugreen.yml up -d --build
-```
+## HTTPS und Portalbilder
 
-### Einstellungen vom Mac übernehmen
-
-Kopiere den kompletten Ordner `konfiguration` aus der Mac-Installation in den Projektordner auf der NAS. Er enthält unter anderem Portale, Benutzer, Favoriten, Wiedergabeverlauf und die geheime Signaturdatei.
-
-Anschließend das Compose-Projekt in UGOS neu bauen oder neu starten.
-
-> Den Ordner `konfiguration` niemals veröffentlichen. Er kann Portaladressen, MAC-Adressen, Token und Zugangsdaten enthalten.
-
-## Aktualisieren
-
-### Standard-Docker mit Git
-
-```bash
-cd Stalker-Client
-cp -R konfiguration ../stalker-client-konfiguration-backup
-docker compose down --remove-orphans
-git pull --ff-only
-docker compose build --no-cache
-docker compose up -d
-```
-
-### UGREEN ohne Git auf der NAS
-
-1. Auf dem Computer die aktuelle Version herunterladen oder das lokale Repository aktualisieren.
-2. Den NAS-Ordner `konfiguration` sichern.
-3. Den Projektordner auf der NAS durch die neue Version ersetzen.
-4. Den gesicherten Ordner `konfiguration` wieder einsetzen.
-5. In UGOS das Projekt mit `docker-compose-ugreen.yml` neu bauen und starten.
-
-## Live-TV-Pipeline
+Über eine HTTPS-Domain lädt der Browser unsichere HTTP-Portalbilder nicht direkt. Version 1.0.29 stellt deshalb Bildadressen als signierte Same-Origin-Anfragen bereit:
 
 ```text
-Stalker-Portal
-      ↓
-Dauerhafter MPEG-TS-Proxy
-      ↓
-Getrennte Video-, Audio- und PCR-Zeitachsen
-      ↓
-Keyframe-Wechsel mit aktuellem Ersatzpuffer
-      ↓
-Eine laufende FFmpeg-Instanz
-      ↓
-Eine fortlaufende HLS-Playlist
-      ↓
-Ein unveränderter Browserplayer
+/api/image?ticket=...
 ```
 
-Wichtige Eigenschaften:
+Der Server lädt das Bild kontrolliert und liefert es über dieselbe HTTPS-Domain an den Browser aus.
 
-- Der Browserplayer wird beim Tokenwechsel nicht ersetzt.
-- FFmpeg wird beim normalen Tokenwechsel nicht neu gestartet.
-- MPEG-TS-Daten werden an 188-Byte-Paketgrenzen ausgerichtet.
-- Der Wechsel erfolgt an einem Keyframe beziehungsweise Random-Access-Punkt.
-- Video-, Audio- und PCR-Zeitachsen werden getrennt fortgeführt.
-- Continuity Counter werden pro PID durchgehend neu vergeben.
-- PAT und PMT werden am Umschaltpunkt erneut eingespeist.
-- Ein Lese-Watchdog erneuert hängende Portalverbindungen.
-- Beim Wechsel wird der aktuellste vollständige Ersatz-Keyframe bevorzugt.
+## Sicherheit
 
-## Wiedergabe von Filmen und Serien
+Der Ordner `konfiguration` kann Portaladressen, MAC-Adressen, Benutzerkonten, Signaturschlüssel, Tokens und Logs enthalten. Er darf niemals veröffentlicht werden.
 
-Vor dem Start eines neuen Titels beendet der Browser die vorherige HLS- beziehungsweise Portal-Sitzung. Das ist besonders bei Portalen wichtig, die pro MAC-Adresse nur eine gleichzeitige Streamverbindung zulassen.
-
-Falls ein zeitlich begrenzter VOD-Link neu geöffnet werden muss, erzeugt der Server über das ursprüngliche Portal-Kommando einen frischen Link. Dadurch wird ein bereits verbrauchter oder abgelaufener Link nicht in einer schnellen FFmpeg-Neustartschleife wiederverwendet.
-
-Bei Serien gilt:
-
-- `get_episodes` wird vor breiten Katalogabfragen verwendet.
-- Fremde Filme aus ungefilterten Portalantworten werden verworfen.
-- Leere Listen wie `series=[]` gelten nicht mehr als Episodennummer.
-- Episode, Staffel und übergeordnete Serien-ID werden getrennt übertragen.
-- Die portalspezifische Staffel- und Episodenlogik bleibt mit Download-Schaltflächen erhalten.
-
-## Downloads für Filme und Serien
-
-Bei Filmen erscheint auf der Medienkarte eine Schaltfläche **Download**. Bei Serien besitzt jede abspielbare Episode eine eigene Download-Schaltfläche.
-
-- Downloads sind nur für Filme und Serien verfügbar, nicht für Live-TV.
-- Video, Audiospuren und vorhandene Untertitel werden ohne Neucodierung übernommen.
-- Die Datei wird direkt an den Browser gestreamt und nicht dauerhaft im Container gespeichert.
-- Maximal zwei Downloads laufen gleichzeitig.
-- Große Dateien können abhängig von Portalgeschwindigkeit und Dateigröße lange dauern.
-- Die Funktion umgeht keine Verschlüsselung und keine DRM-Schutzmaßnahmen.
-
-## Projektstruktur
+Geschützt werden unter anderem:
 
 ```text
-Dockerfile
-docker-compose.yml
-docker-compose-ugreen.yml
-deploy/
-├── standard/
-│   ├── docker-compose.yml
-│   └── README.md
-└── ugreen/
-    ├── docker-compose.yml
-    └── README.md
-```
-
-## Konfiguration
-
-Beim ersten Start werden im Ordner `konfiguration/` unter anderem folgende Dateien erzeugt:
-
-```text
+konfiguration/
 portal-einstellungen.json
 portal-zuweisungen.json
 benutzer.json
 benutzer-freigaben.json
-wiedergabeverlauf.json
-favoriten.json
-fortschritt.json
 .stalker-geheimnis
 stalker-client.log
 ```
 
-Dieser Ordner enthält vertrauliche Daten. Er darf nicht veröffentlicht oder unverändert in öffentliche Fehlerberichte hochgeladen werden.
-
 ## Port ändern
 
-Der Standardport ist 8080.
-
-### Standard-Docker
+Standardport: `8080`.
 
 ```bash
 STALKER_PORT=8180 docker compose up -d --build
 ```
 
-### UGREEN
-
-In den UGOS-Projektvariablen setzen:
+In UGOS die Projektvariable setzen:
 
 ```text
 STALKER_PORT=8180
 ```
 
-Danach ist die Anwendung unter `http://IP-DER-NAS:8180` erreichbar.
-
-## Docker-Bedienung
-
-```bash
-# Status
-docker compose ps
-
-# Logs
-docker compose logs -f --tail=300
-
-# Neustart
-docker compose restart
-
-# Stoppen
-docker compose down
-
-# Vollständig neu bauen
-docker compose down --remove-orphans
-docker compose build --no-cache
-docker compose up -d
-```
-
-Bei UGREEN mit der root-nahen Datei jeweils ergänzen:
-
-```bash
-docker compose -f docker-compose-ugreen.yml ...
-```
-
 ## Diagnose
 
-Bei einem Live-Start beziehungsweise Wechsel erscheinen unter anderem folgende Meldungen:
-
-```text
-FFmpeg-HLS mit dauerhaftem TS-Proxy gestartet
-Dauerhafter TS-Proxy mit Mehrfach-Zeitachsen verbunden
-TS-Proxy verwendet den neuesten verfügbaren Keyframe
-TS-Proxy mit getrennten Medienuhren gewechselt
-```
-
-Bei einem erforderlichen VOD-Neustart erscheint:
-
-```text
-Frischen Portal-Link für Medienwiedergabe erstellt
-```
-
-Vor dem Teilen eines Logs Portaladressen, MAC-Adressen, Token, Tickets und Zugangsdaten entfernen.
-
-## Fehlerbehebung
-
-### UGREEN sucht `/volume2/Dockerfile`
-
-Falsche Compose-Datei oder falscher Projektordner. In UGOS den Hauptordner `Stalker-Client` auswählen und ausschließlich `docker-compose-ugreen.yml` aus diesem Hauptordner verwenden.
-
-### Port 8080 ist belegt
-
-Einen anderen Port über `STALKER_PORT` verwenden oder den alten Container stoppen.
-
-### Browser zeigt noch eine alte Version
-
-Den Browser mit `Cmd + Shift + R` beziehungsweise `Strg + F5` vollständig neu laden.
-
-### Containerstatus prüfen
-
 ```bash
 docker compose ps
-docker compose logs --tail=100
+docker compose logs -f --tail=300
 ```
 
-## Wichtig bei Volumes
+Bei UGREEN über die Kommandozeile:
 
-Nur der Konfigurationsordner darf eingebunden werden:
+```bash
+docker compose -f docker-compose-ugreen.yml logs -f --tail=300
+```
+
+Vor dem Teilen von Logs Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernen.
+
+## Qualitätssicherung
+
+GitHub Actions führt bei Pull Requests und Änderungen auf `main` aus:
 
 ```text
-./konfiguration:/konfiguration
+Secret-Scan
+JavaScript-Syntaxprüfung
+Python-Unittests
+Validierung aller Compose-Dateien
+vollständiger Docker-Build
 ```
 
-Keinen zusätzlichen Mount auf `/anwendung` anlegen. Ein solcher Mount überschreibt den Anwendungscode im Image und kann zu Berechtigungsfehlern führen.
+## Lizenz und Nutzung
 
-## Sicherheit
-
-- Konfigurationsdateien, MAC-Adressen, Portalzugänge und Token nicht veröffentlichen.
-- Die Anwendung nicht ungeschützt ins öffentliche Internet stellen.
-- Für externen Zugriff einen Reverse Proxy mit HTTPS und zusätzlicher Zugriffskontrolle verwenden.
-- Den Ordner `konfiguration` regelmäßig sichern.
-- Downloads ausschließlich für Inhalte verwenden, deren lokale Speicherung erlaubt ist.
-
-## Versionsverlauf
-
-### 1.0.28
-
-- Vorherige Portal- und HLS-Sitzung wird vor einer neuen Wiedergabe sofort freigegeben
-- Zeitlich begrenzte VOD- und Serienlinks werden bei einem Neustart frisch erzeugt
-- HTTP-462-Neustartschleifen durch wiederverwendete Portal-Links werden verhindert
-- Neuester vollständiger Keyframe wird bei unvollständiger Live-Nachführung verwendet
-- Korrekte Staffel- und Episodenzuordnung bei portalspezifischen Serienantworten
-- Download-Erweiterung überschreibt die Seriennavigation nicht mehr
-- Root-nahe `docker-compose-ugreen.yml` für die UGOS-Dockeroberfläche
-- Dokumentierte Lösung für den Fehler `lstat /volume2/Dockerfile`
-
-### 1.0.27
-
-- Separate Zeitachsenkorrektur für Video, Audio und PCR
-- Lese-Watchdog für hängende Portalverbindungen
-- Download-Schaltflächen für Filme und einzelne Serienepisoden
-- Verlustfreies Remuxen autorisierter Inhalte als MKV
-
-### Frühere Versionen
-
-Frühere Versionen führten unter anderem Browser-Handover, Diagnoseprotokolle, Mehrportal- und Benutzerverwaltung, UGREEN-Unterstützung sowie das gemeinsame Docker-Deployment ein.
+Die Anwendung umgeht keine Verschlüsselung oder DRM-Schutzmaßnahmen. Downloads und Wiedergabe dürfen nur im Rahmen der Berechtigungen und Nutzungsbedingungen des jeweiligen Anbieters verwendet werden.
