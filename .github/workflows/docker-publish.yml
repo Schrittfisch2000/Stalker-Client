@@ -2,46 +2,128 @@ name: Publish Docker image
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: docker-release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: schrittfisch2000/stalker-client
 
 jobs:
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: Repository auschecken
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Login Docker Hub
+      - name: Release-Version ermitteln
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Ungültige VERSION: $VERSION"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bereits veröffentlichte Version melden
+        if: steps.version.outputs.tag_exists == 'true' && steps.version.outputs.release_exists == 'true'
+        run: echo "${{ steps.version.outputs.tag }} ist bereits vollständig veröffentlicht."
+
+      - name: Bei Docker Hub anmelden
+        if: steps.version.outputs.tag_exists == 'false'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Setup QEMU
+      - name: QEMU einrichten
+        if: steps.version.outputs.tag_exists == 'false'
         uses: docker/setup-qemu-action@v3
 
-      - name: Setup Buildx
+      - name: Docker Buildx einrichten
+        if: steps.version.outputs.tag_exists == 'false'
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: schrittfisch2000/stalker-client
-          tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-
-      - name: Build and push
+      - name: Multi-Arch-Image bauen und veröffentlichen
+        if: steps.version.outputs.tag_exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.title=Stalker Client
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Git-Tag erstellen
+        if: steps.version.outputs.tag_exists == 'false'
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$GITHUB_SHA" -m "Stalker Client $VERSION"
+          git push origin "$TAG"
+
+      - name: GitHub Release erstellen
+        if: steps.version.outputs.release_exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          RELEASE_NOTES="RELEASE-${VERSION}.md"
+
+          if [[ -f "$RELEASE_NOTES" ]]; then
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "Stalker Client ${VERSION}" \
+              --notes-file "$RELEASE_NOTES"
+          else
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "Stalker Client ${VERSION}" \
+              --generate-notes
+          fi
