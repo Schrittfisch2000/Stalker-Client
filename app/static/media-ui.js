@@ -69,7 +69,9 @@
     if (progress && progress.percent > 0) {
       const bar = document.createElement('div');
       bar.className = 'media-progress';
-      bar.innerHTML = `<span style="width:${Math.min(100, Number(progress.percent) || 0)}%"></span>`;
+      const fill = document.createElement('span');
+      fill.style.width = `${Math.min(100, Number(progress.percent) || 0)}%`;
+      bar.append(fill);
       card.append(bar);
     }
     if (progress?.finished) {

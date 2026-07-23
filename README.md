@@ -1,16 +1,16 @@
-# Stalker Client für UGREEN NAS
+# Stalker Client Docker
 
 **Aktuelle Version: 1.0.30**
 
-Dieses Repository stellt den Stalker Client ausschließlich als Docker-Compose-Projekt für UGREEN-NAS mit UGOS Pro bereit.
+Stalker Client läuft als Docker-WebApp für kompatible Stalker-/MAG-Portale. Das Repository ist auf den Docker-Betrieb ausgerichtet; normale Installationen verwenden das fertige Docker-Hub-Image und bauen nicht lokal.
 
-Das offizielle Docker-Image ist:
+Offizielles Image:
 
 ```text
 schrittfisch2000/stalker-client:latest
 ```
 
-Die NAS baut die Anwendung nicht lokal. UGOS lädt das fertige Image direkt von Docker Hub und wählt automatisch die passende Architektur für `linux/amd64` oder `linux/arm64`.
+Das Image wird für `linux/amd64` und `linux/arm64` veröffentlicht. Damit funktioniert es auf UGREEN NAS, Linux-Servern, Docker Desktop unter macOS und Windows sowie auf Raspberry Pi 4/5 mit 64-Bit-System.
 
 > Nutze den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt.
 
@@ -27,55 +27,23 @@ Die NAS baut die Anwendung nicht lokal. UGOS lädt das fertige Image direkt von 
 
 ## Benötigte Dateien
 
-Für die Installation auf der UGREEN NAS wird nur eine Datei benötigt:
+Für den Betrieb wird nur diese Datei benötigt:
 
 ```text
 docker-compose.yml
 ```
 
-Der Ordner `konfiguration` wird auf der NAS angelegt und enthält später alle Einstellungen, Benutzer, Portalzugänge, Favoriten, Fortschritte und Logs.
-
-## Installation über die UGOS-Weboberfläche
-
-Diese Variante ist der empfohlene Weg. Sie benötigt kein `git`, `curl`, `wget` und kein Terminal auf der NAS.
-
-### 1. Projektordner anlegen
-
-1. In UGOS Pro den **Dateimanager** öffnen.
-2. In den Docker-Bereich wechseln, zum Beispiel:
-
-   ```text
-   /volume1/docker
-   ```
-
-3. Einen neuen Ordner erstellen:
-
-   ```text
-   stalker-client
-   ```
-
-4. In diesem Ordner einen weiteren Ordner erstellen:
-
-   ```text
-   konfiguration
-   ```
-
-Die Struktur soll danach so aussehen:
+Zusätzlich wird neben der Compose-Datei ein Ordner angelegt:
 
 ```text
-stalker-client/
-└── konfiguration/
+konfiguration
 ```
 
-### 2. Compose-Datei einfügen
+Darin speichert die App später Einstellungen, Benutzer, Portalzugänge, Favoriten, Fortschritte und Logs. Diesen Ordner niemals löschen, wenn Einstellungen erhalten bleiben sollen.
 
-Im Ordner `stalker-client` eine neue Datei anlegen:
+## docker-compose.yml
 
-```text
-docker-compose.yml
-```
-
-Inhalt:
+Diese Compose-Datei ist für UGREEN, Linux, macOS, Windows Docker Desktop und Raspberry Pi geeignet:
 
 ```yaml
 name: stalker-client-ugreen
@@ -111,6 +79,45 @@ services:
       start_period: 30s
 ```
 
+## Installation auf UGREEN NAS über die Weboberfläche
+
+Diese Variante ist der empfohlene Weg für UGOS Pro. Sie benötigt kein `git`, `curl`, `wget` und kein Terminal auf der NAS.
+
+### 1. Projektordner anlegen
+
+1. In UGOS Pro den **Dateimanager** öffnen.
+2. In den Docker-Bereich wechseln, zum Beispiel:
+
+   ```text
+   /volume1/docker
+   ```
+
+3. Einen neuen Ordner erstellen:
+
+   ```text
+   stalker-client
+   ```
+
+4. In diesem Ordner einen weiteren Ordner erstellen:
+
+   ```text
+   konfiguration
+   ```
+
+Die Struktur soll danach so aussehen:
+
+```text
+stalker-client/
+├── docker-compose.yml
+└── konfiguration/
+```
+
+### 2. Compose-Datei einfügen
+
+Im Ordner `stalker-client` die Datei `docker-compose.yml` mit dem Inhalt aus dem Abschnitt **docker-compose.yml** anlegen.
+
+Wichtig: Die Compose-Datei darf keinen `build:`-Block enthalten. UGOS soll das fertige Image von Docker Hub laden.
+
 ### 3. Docker-Projekt in UGOS erstellen
 
 1. In UGOS Pro die App **Docker** öffnen.
@@ -130,7 +137,7 @@ services:
 
 6. Projekt erstellen und starten.
 
-UGOS lädt jetzt das Image `schrittfisch2000/stalker-client:latest` von Docker Hub.
+UGOS lädt jetzt `schrittfisch2000/stalker-client:latest` von Docker Hub.
 
 ### 4. Weboberfläche öffnen
 
@@ -148,7 +155,104 @@ http://192.168.178.4:8080
 
 Beim ersten Start richtest du Portal, MAC-Adresse und Benutzer direkt in der Weboberfläche ein.
 
-## Update über die UGOS-Weboberfläche
+## Installation auf Linux
+
+Voraussetzung ist ein installiertes Docker mit Docker Compose Plugin.
+
+```bash
+mkdir -p ~/stalker-client/konfiguration
+cd ~/stalker-client
+```
+
+Dann `docker-compose.yml` aus dem Abschnitt **docker-compose.yml** in diesen Ordner legen und starten:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Öffnen:
+
+```text
+http://IP-DES-LINUX-SERVERS:8080
+```
+
+Lokal auf demselben Rechner:
+
+```text
+http://localhost:8080
+```
+
+## Installation auf macOS mit Docker Desktop
+
+1. Docker Desktop installieren und starten.
+2. Einen Projektordner anlegen:
+
+```bash
+mkdir -p ~/stalker-client/konfiguration
+cd ~/stalker-client
+```
+
+3. `docker-compose.yml` aus dem Abschnitt **docker-compose.yml** in diesen Ordner legen.
+4. Container starten:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Öffnen:
+
+```text
+http://localhost:8080
+```
+
+Docker Desktop auf Apple Silicon zieht automatisch das `arm64`-Image. Intel-Macs ziehen automatisch `amd64`.
+
+## Installation auf Raspberry Pi
+
+Unterstützt wird Raspberry Pi 4 oder 5 mit einem 64-Bit-Betriebssystem und Docker. Ein 32-Bit-System ist nicht empfohlen, weil das offizielle Image für `linux/arm64` veröffentlicht wird.
+
+```bash
+mkdir -p ~/stalker-client/konfiguration
+cd ~/stalker-client
+```
+
+Dann `docker-compose.yml` aus dem Abschnitt **docker-compose.yml** in diesen Ordner legen und starten:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Öffnen:
+
+```text
+http://IP-DES-RASPBERRY-PI:8080
+```
+
+Hinweis: Transcoding und Downloads können auf einem Raspberry Pi deutlich langsamer sein als auf einer NAS oder einem Desktop-Rechner.
+
+## Installation auf Windows mit Docker Desktop
+
+1. Docker Desktop installieren und starten.
+2. Einen Ordner `stalker-client` anlegen.
+3. Darin den Ordner `konfiguration` erstellen.
+4. `docker-compose.yml` aus dem Abschnitt **docker-compose.yml** in den Ordner legen.
+5. In PowerShell im Projektordner starten:
+
+```powershell
+docker compose pull
+docker compose up -d
+```
+
+Öffnen:
+
+```text
+http://localhost:8080
+```
+
+## Updates
 
 Die Compose-Datei verwendet:
 
@@ -156,16 +260,23 @@ Die Compose-Datei verwendet:
 pull_policy: always
 ```
 
-Dadurch prüft UGOS beim erneuten Bereitstellen, ob auf Docker Hub ein neueres Image verfügbar ist.
+Dadurch wird beim erneuten Bereitstellen geprüft, ob Docker Hub ein neueres Image bereitstellt.
 
-Vorgehen:
+UGREEN Weboberfläche:
 
-1. In UGOS Pro **Docker** öffnen.
-2. Das Projekt `stalker-client` stoppen.
+1. Docker-App öffnen.
+2. Projekt `stalker-client` stoppen.
 3. Projekt aktualisieren, erneut bereitstellen oder neu erstellen.
-4. Darauf achten, dass keine Option wie **Daten löschen**, **Volumes löschen** oder **Projektordner löschen** aktiviert ist.
+4. Keine Option wie **Daten löschen**, **Volumes löschen** oder **Projektordner löschen** aktivieren.
 5. Projekt wieder starten.
 6. Browser vollständig neu laden.
+
+Terminal auf Linux, macOS, Windows oder Raspberry Pi:
+
+```bash
+docker compose pull
+docker compose up -d
+```
 
 Der Ordner `konfiguration` bleibt erhalten und wird nicht vom Docker-Image überschrieben.
 
@@ -173,16 +284,22 @@ Der Ordner `konfiguration` bleibt erhalten und wird nicht vom Docker-Image über
 
 Standardmäßig läuft der Client auf Port `8080`.
 
-Wenn Port 8080 belegt ist, in UGOS beim Compose-Projekt die Umgebungsvariable setzen:
+Wenn Port 8080 belegt ist, eine Umgebungsvariable setzen:
 
 ```text
 STALKER_PORT=8180
 ```
 
+Oder vor dem Start im Terminal:
+
+```bash
+STALKER_PORT=8180 docker compose up -d
+```
+
 Danach lautet die Adresse:
 
 ```text
-http://IP-DER-UGREEN-NAS:8180
+http://IP-ODER-HOSTNAME:8180
 ```
 
 ## Konfiguration sichern
@@ -199,12 +316,19 @@ Den Ordner `konfiguration` niemals veröffentlichen oder ungeschwärzt in GitHub
 
 ## Diagnose
 
-In UGOS Pro:
+UGREEN:
 
 1. **Docker** öffnen.
 2. Projekt `stalker-client` auswählen.
 3. Container `stalker-client` öffnen.
 4. Protokolle anzeigen.
+
+Terminal:
+
+```bash
+docker compose ps
+docker compose logs -f --tail=200
+```
 
 Nützliche Prüfungen:
 
@@ -219,7 +343,7 @@ Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets un
 
 ### Docker sucht ein Dockerfile
 
-Wenn UGOS meldet, dass ein `Dockerfile` fehlt, wurde eine alte lokale Build-Compose-Datei verwendet.
+Dann wurde eine alte lokale Build-Compose-Datei verwendet.
 
 Richtig ist nur diese Zeile:
 
@@ -241,7 +365,17 @@ konfiguration
 
 ### Port 8080 ist belegt
 
-Setze `STALKER_PORT=8180` oder einen anderen freien Port in den Projektvariablen und stelle das Projekt neu bereit.
+Setze `STALKER_PORT=8180` oder einen anderen freien Port und stelle das Projekt neu bereit.
+
+### Raspberry Pi lädt kein Image
+
+Prüfe, ob ein 64-Bit-System läuft:
+
+```bash
+uname -m
+```
+
+Erwartet ist `aarch64` oder `arm64`. Bei `armv7l` läuft ein 32-Bit-System.
 
 ## Automatischer Docker-Build
 
@@ -249,11 +383,17 @@ GitHub Actions prüft bei Änderungen:
 
 - Python-Unittests
 - JavaScript-Syntax
-- die UGREEN-Compose-Datei
+- die Compose-Datei
 - einen vollständigen Docker-Build
 - versehentlich eingecheckte Konfigurations- oder Geheimnisdateien
 
-Nach erfolgreichen Prüfungen auf `main` kann das Multi-Arch-Image für `linux/amd64` und `linux/arm64` auf Docker Hub veröffentlicht werden.
+Nach erfolgreichen Prüfungen auf `main` veröffentlicht GitHub Actions automatisch das Multi-Arch-Image für `linux/amd64` und `linux/arm64` auf Docker Hub:
+
+```text
+schrittfisch2000/stalker-client:latest
+schrittfisch2000/stalker-client:1.0.30
+schrittfisch2000/stalker-client:v1.0.30
+```
 
 ## Lizenz und Nutzung
 

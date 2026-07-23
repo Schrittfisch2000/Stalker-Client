@@ -1,4 +1,4 @@
-name: UGREEN Docker CI
+name: Docker CI
 
 on:
   pull_request:
@@ -11,12 +11,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: ugreen-ci-${{ github.workflow }}-${{ github.ref }}
+  group: docker-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    name: Anwendung und UGREEN Docker prüfen
+    name: Anwendung und Docker prüfen
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -67,7 +67,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: UGREEN-Compose-Datei validieren
+      - name: Compose-Datei validieren
         run: docker compose -f docker-compose.yml config >/dev/null
 
       - name: Docker-Image lokal bauen
