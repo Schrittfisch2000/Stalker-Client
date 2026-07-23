@@ -65,7 +65,8 @@
     ticket = match ? match[1] : '';
     duration = Number(playback.duration) || 0;
     baseOffset = 0;
-    const customControls = !isLive && duration && playback.seekable;
+    const seekable = playback.seekable === true || playback.seekable === 'true';
+    const customControls = !isLive && duration > 0 && seekable;
     $('vodControls').hidden = !customControls;
     video.controls = !customControls;
     updateControls();
