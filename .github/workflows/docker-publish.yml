@@ -1,0 +1,25 @@
+name: Build and Push to Docker Hub
+
+on:
+  push:
+    branches: [ "main" ] # Wechsel auf "master", falls dein Haupt-Branch so heißt
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Login bei Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Image bauen und hochladen
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ secrets.DOCKER_USERNAME }}/stalker-client:latest
