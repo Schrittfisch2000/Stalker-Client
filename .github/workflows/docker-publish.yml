@@ -2,11 +2,6 @@ name: Publish Docker image
 
 on:
   workflow_call:
-    secrets:
-      DOCKERHUB_USERNAME:
-        required: true
-      DOCKERHUB_TOKEN:
-        required: true
   workflow_dispatch:
 
 permissions:
@@ -30,6 +25,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Docker-Hub-Zugang prüfen
+        shell: bash
+        env:
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "::error::Docker-Hub-Zugangsdaten fehlen oder wurden nicht an den Release-Workflow übergeben."
+            exit 1
+          fi
 
       - name: Release-Version ermitteln
         id: version
