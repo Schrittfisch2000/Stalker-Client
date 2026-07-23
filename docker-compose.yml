@@ -2,13 +2,8 @@ name: stalker-client-deutsch
 
 services:
   stalker-client:
-    image: stalker-client-deutsch:1.0.29
-    build:
-      context: .
-      labels:
-        de.stalker-client.beschreibung: "Deutscher Web-Client für Stalker- und MAG-Portale"
-        de.stalker-client.version: "1.0.29"
-        de.stalker-client.plattform: "Docker Desktop und Docker Engine"
+    image: schrittfisch2000/stalker-client:latest
+    pull_policy: always
     container_name: stalker-client-deutsch
     hostname: stalker-client-deutsch
     restart: unless-stopped
