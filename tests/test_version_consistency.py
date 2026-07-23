@@ -11,6 +11,7 @@ OFFICIAL_IMAGE = "schrittfisch2000/stalker-client:latest"
 REMOVED_LEGACY_FILES = (
     "docker-compose-ugreen.yml",
     "docker-compose-synology.yml",
+    "deploy",
     "deploy/standard/docker-compose.yml",
     "deploy/ugreen/docker-compose.yml",
     "CHANGELOG-1.0.30.md",
