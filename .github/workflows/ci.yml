@@ -44,6 +44,12 @@ jobs:
             exit 1
           fi
 
+      - name: JavaScript-Syntax prüfen
+        run: |
+          for file in app/static/*.js; do
+            node --check "$file"
+          done
+
       - name: Unittests ausführen
         id: unit-tests
         continue-on-error: true
