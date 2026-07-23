@@ -54,6 +54,21 @@ class RepositorySecurityTests(unittest.TestCase):
         self.assertNotIn("innerHTML", asset)
         self.assertNotIn("<img", asset)
 
+    def test_base_card_renderer_does_not_inject_image_html(self) -> None:
+        asset = self.read("app/static/app.js")
+        self.assertIn("document.createElement('img')", asset)
+        self.assertIn("imageElement.src = image", asset)
+        self.assertIn("title.textContent", asset)
+        self.assertIn("description.textContent", asset)
+        self.assertIn("message.textContent = error.message", asset)
+        self.assertNotIn("`<img", asset)
+
+    def test_media_progress_bar_uses_dom_style_property(self) -> None:
+        asset = self.read("app/static/media-ui.js")
+        self.assertIn("document.createElement('span')", asset)
+        self.assertIn("fill.style.width", asset)
+        self.assertNotIn("bar.innerHTML", asset)
+
 
 if __name__ == "__main__":
     unittest.main()

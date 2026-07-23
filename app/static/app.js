@@ -97,19 +97,41 @@ async function loadCategories() {
       $('categories').append(button);
     }
   } catch (error) {
-    $('categories').innerHTML = `<span class="error">${error.message}</span>`;
+    $('categories').replaceChildren();
+    const message = document.createElement('span');
+    message.className = 'error';
+    message.textContent = error.message;
+    $('categories').append(message);
   }
 }
 
 function createCard(item) {
   const card = document.createElement('article');
   card.className = 'card';
-  const image = imageOf(item);
-  const imageNode = image ? `<img src="${image}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<div class="placeholder">▶</div>';
-  const description = item.description || item.plot || item.descr || item.year || '';
-  card.innerHTML = `${imageNode}<div class="card-body"><h3></h3><p></p></div>`;
-  card.querySelector('h3').textContent = titleOf(item);
-  card.querySelector('p').textContent = String(description).slice(0, 180);
+
+  const image = item.image_proxy || item.image || imageOf(item);
+  if (image) {
+    const imageElement = document.createElement('img');
+    imageElement.src = image;
+    imageElement.alt = '';
+    imageElement.loading = 'lazy';
+    imageElement.referrerPolicy = 'no-referrer';
+    card.append(imageElement);
+  } else {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'placeholder';
+    placeholder.textContent = '▶';
+    card.append(placeholder);
+  }
+
+  const body = document.createElement('div');
+  body.className = 'card-body';
+  const title = document.createElement('h3');
+  title.textContent = titleOf(item);
+  const description = document.createElement('p');
+  description.textContent = String(item.description || item.plot || item.descr || item.year || '').slice(0, 180);
+  body.append(title, description);
+  card.append(body);
   card.onclick = () => state.type === 'series' ? openSeries(item) : playItem(item);
   return card;
 }

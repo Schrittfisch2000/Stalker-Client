@@ -33,12 +33,16 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertIsNotNone(match, "README enthält keine aktuelle Versionsangabe")
         self.assertEqual(match.group(1), APP_VERSION)
 
-    def test_readme_is_limited_to_ugreen_deployment(self) -> None:
+    def test_readme_documents_supported_docker_targets(self) -> None:
         readme = self.read("README.md")
         self.assertIn("UGREEN NAS", readme)
-        self.assertNotIn("Windows mit Docker", readme)
-        self.assertNotIn("macOS mit Docker", readme)
-        self.assertNotIn("Synology NAS", readme)
+        self.assertIn("Installation auf Linux", readme)
+        self.assertIn("Installation auf macOS", readme)
+        self.assertIn("Installation auf Raspberry Pi", readme)
+        self.assertIn("Installation auf Windows", readme)
+        self.assertIn("linux/amd64", readme)
+        self.assertIn("linux/arm64", readme)
+        self.assertIn(OFFICIAL_IMAGE, readme)
 
     def test_frontend_version_markers_match_application(self) -> None:
         template = self.read("app/templates/index.html")
