@@ -8,11 +8,14 @@ from app.version import APP_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 OFFICIAL_IMAGE = "schrittfisch2000/stalker-client:latest"
-REMOVED_DEPLOYMENT_FILES = (
+REMOVED_LEGACY_FILES = (
     "docker-compose-ugreen.yml",
     "docker-compose-synology.yml",
     "deploy/standard/docker-compose.yml",
     "deploy/ugreen/docker-compose.yml",
+    "CHANGELOG-1.0.30.md",
+    "RELEASE-1.0.30.md",
+    "docs/DOCKER-HUB-UPDATE.md",
 )
 
 
@@ -56,8 +59,8 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertIn("./konfiguration:/konfiguration", compose)
         self.assertNotIn("\n    build:", compose)
 
-    def test_obsolete_deployment_files_are_removed(self) -> None:
-        for relative_path in REMOVED_DEPLOYMENT_FILES:
+    def test_obsolete_files_are_removed(self) -> None:
+        for relative_path in REMOVED_LEGACY_FILES:
             with self.subTest(path=relative_path):
                 self.assertFalse((ROOT / relative_path).exists())
 
