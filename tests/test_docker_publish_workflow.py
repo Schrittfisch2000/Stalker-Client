@@ -5,23 +5,33 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "docker-publish.yml"
+PUBLISH_WORKFLOW = ROOT / ".github" / "workflows" / "docker-publish.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 
 class DockerPublishWorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.workflow = WORKFLOW.read_text(encoding="utf-8")
+        cls.workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
+        cls.ci = CI_WORKFLOW.read_text(encoding="utf-8")
 
-    def test_release_runs_after_main_updates(self) -> None:
-        self.assertIn("branches:\n      - main", self.workflow)
+    def test_release_is_reusable_and_manually_runnable(self) -> None:
+        self.assertIn("workflow_call:", self.workflow)
         self.assertIn("workflow_dispatch:", self.workflow)
+        self.assertNotIn("branches:\n      - main", self.workflow)
+
+    def test_ci_publishes_only_after_successful_main_tests(self) -> None:
+        self.assertIn("needs: test", self.ci)
+        self.assertIn("github.event_name == 'push'", self.ci)
+        self.assertIn("github.ref == 'refs/heads/main'", self.ci)
+        self.assertIn("uses: ./.github/workflows/docker-publish.yml", self.ci)
+        self.assertIn("secrets: inherit", self.ci)
 
     def test_release_cancels_outdated_runs(self) -> None:
         self.assertIn("group: docker-release-${{ github.repository }}", self.workflow)
         self.assertIn("cancel-in-progress: true", self.workflow)
 
-    def test_release_has_write_permission_for_tags_releases_and_reporting(self) -> None:
+    def test_release_has_write_permission(self) -> None:
         self.assertIn("contents: write", self.workflow)
         self.assertIn("issues: write", self.workflow)
         self.assertIn('git push origin "$TAG"', self.workflow)
@@ -36,9 +46,9 @@ class DockerPublishWorkflowTests(unittest.TestCase):
     def test_release_publishes_supported_architectures(self) -> None:
         self.assertIn("platforms: linux/amd64,linux/arm64", self.workflow)
 
-    def test_release_uses_docker_hub_secrets(self) -> None:
-        self.assertIn("secrets.DOCKERHUB_USERNAME", self.workflow)
-        self.assertIn("secrets.DOCKERHUB_TOKEN", self.workflow)
+    def test_release_uses_repository_credentials(self) -> None:
+        self.assertGreaterEqual(self.workflow.count("required: true"), 2)
+        self.assertIn("docker/login-action@v3", self.workflow)
 
     def test_release_reports_success_and_failure_with_run_link(self) -> None:
         self.assertIn("Veröffentlichung erfolgreich melden", self.workflow)

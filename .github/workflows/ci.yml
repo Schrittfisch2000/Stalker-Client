@@ -75,3 +75,13 @@ jobs:
 
       - name: Docker-Image bauen
         run: docker build --tag stalker-client-ci:${{ github.sha }} .
+
+  publish:
+    name: Docker Hub veröffentlichen
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      issues: write
+    uses: ./.github/workflows/docker-publish.yml
+    secrets: inherit
