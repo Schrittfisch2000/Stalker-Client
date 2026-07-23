@@ -46,8 +46,10 @@ class DockerPublishWorkflowTests(unittest.TestCase):
     def test_release_publishes_supported_architectures(self) -> None:
         self.assertIn("platforms: linux/amd64,linux/arm64", self.workflow)
 
-    def test_release_uses_repository_credentials(self) -> None:
-        self.assertGreaterEqual(self.workflow.count("required: true"), 2)
+    def test_release_checks_credentials_inside_the_running_job(self) -> None:
+        self.assertNotIn("required: true", self.workflow)
+        self.assertIn("Docker-Hub-Zugang prüfen", self.workflow)
+        self.assertIn('[[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]', self.workflow)
         self.assertIn("docker/login-action@v3", self.workflow)
 
     def test_release_reports_success_and_failure_with_run_link(self) -> None:
