@@ -10,8 +10,8 @@ from . import main, safari_hls_fix
 from .config import Settings
 from .stalker import StalkerClient
 
-PREPARE_REPLACEMENT_AFTER_SECONDS = 26.0
-MAX_CONNECTION_AGE_SECONDS = 42.0
+PREPARE_REPLACEMENT_AFTER_SECONDS = 20.0
+MAX_CONNECTION_AGE_SECONDS = 24.0
 CURRENT_READ_TIMEOUT_SECONDS = 6.0
 CATCH_UP_TIMEOUT_SECONDS = 4.0
 MAX_CATCH_UP_PACKETS = 60_000
@@ -42,6 +42,8 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
         self.last_output_pts_by_pid: dict[int, int] = {}
         self.last_pts_step_by_pid: dict[int, int] = {}
         self.last_output_video_pid: int | None = None
+        self.last_output_audio_pts: int | None = None
+        self.last_audio_step: int = DEFAULT_AUDIO_STEP_90KHZ
         self.last_source_video_pts: int | None = None
         self.last_pcr_step: int | None = None
         self.pcr_offset: int = 0
@@ -82,9 +84,15 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
         self.timestamp_offsets_by_pid = {}
         for pid, source_pts in source_pts_by_pid.items():
             previous_pts = self.last_output_pts_by_pid.get(pid)
+            if previous_pts is None and pid not in self.video_pids:
+                previous_pts = self.last_output_audio_pts
             if previous_pts is None:
                 continue
-            target = self._next_pts_target(pid, previous_pts)
+            step = self.last_pts_step_by_pid.get(
+                pid,
+                self.last_audio_step if pid not in self.video_pids else self._default_step_for_pid(pid),
+            )
+            target = (previous_pts + step) % legacy.PTS_WRAP
             self.timestamp_offsets_by_pid[pid] = (target - source_pts) % legacy.PTS_WRAP
 
         if self.last_output_pcr is not None and source_pcr_anchor is not None:
@@ -161,6 +169,12 @@ class MultiClockTimelineNormalizer(legacy.TsTimelineNormalizer):
                 self.last_output_video_pts = rewritten
                 self.last_output_video_pid = pid
                 self.last_source_video_pts = source_pts
+            else:
+                if previous_pts is not None:
+                    step = (rewritten - previous_pts) % legacy.PTS_WRAP
+                    if 0 < step <= MAX_REASONABLE_PTS_STEP:
+                        self.last_audio_step = step
+                self.last_output_audio_pts = rewritten
 
             if flags == 3 and pos + 10 <= legacy.TS_PACKET_SIZE:
                 source_dts = legacy._decode_timestamp(packet, pos + 5)

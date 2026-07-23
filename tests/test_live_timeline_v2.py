@@ -8,6 +8,7 @@ from app.live_ts_proxy import PCR_WRAP, PTS_WRAP, _decode_timestamp, _encode_tim
 TS_PACKET_SIZE = 188
 VIDEO_PID = 0x101
 AUDIO_PID = 0x102
+REPLACEMENT_AUDIO_PID = 0x202
 PCR_PID = 0x100
 VIDEO_STEP = 3_600
 AUDIO_STEP = 1_920
@@ -91,6 +92,24 @@ class MultiClockTimelineTests(unittest.TestCase):
         normalizer.normalize(make_pes_packet(VIDEO_PID, 123_000))
         self.assertEqual(normalizer.last_source_video_pts, 123_000)
         self.assertEqual(normalizer.last_output_video_pts, 623_000)
+
+    def test_audio_continues_when_replacement_changes_audio_pid(self) -> None:
+        normalizer = MultiClockTimelineNormalizer()
+        normalizer.video_pids = {VIDEO_PID}
+        normalizer.normalize(make_pes_packet(VIDEO_PID, 900_000))
+        normalizer.normalize(make_pes_packet(AUDIO_PID, 1_800_000))
+        normalizer.normalize(make_pes_packet(AUDIO_PID, 1_800_000 + AUDIO_STEP))
+
+        source_video = 45_000
+        source_audio = 360_000
+        normalizer.begin_multi_clock_switch(
+            source_video,
+            {VIDEO_PID: source_video, REPLACEMENT_AUDIO_PID: source_audio},
+            None,
+        )
+
+        audio = normalizer.normalize(make_pes_packet(REPLACEMENT_AUDIO_PID, source_audio))
+        self.assertEqual(_decode_timestamp(audio, 13), 1_800_000 + (2 * AUDIO_STEP))
 
     def test_pts_comparison_handles_wrap(self) -> None:
         target = PTS_WRAP - 1_000

@@ -15,6 +15,8 @@ from .config import Settings
 from .live_ts_proxy import run_live_ts_proxy
 from .stalker import StalkerClient
 
+_vod_seek_offsets: dict[str, float] = {}
+
 
 def _create_ticket(
     url: str,
@@ -148,11 +150,17 @@ async def _start_direct_ffmpeg(
     headers = portal.portal_headers_for_stream()
     headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
     ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+    seek_offset = max(0.0, _vod_seek_offsets.get(session_id, 0.0))
     command = [
         "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
         "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
         "-probesize", "1000000", "-analyzeduration", "1000000",
+    ]
+    if seek_offset:
+        command += ["-ss", f"{seek_offset:.3f}"]
+    command += [
         "-i", str(data["url"]),
+        "-af", "aresample=async=1000:first_pts=0",
         "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
@@ -177,8 +185,77 @@ async def _start_direct_ffmpeg(
     except OSError as exc:
         raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
     asyncio.create_task(main.log_ffmpeg(session_id, process))
-    main.logger.info("FFmpeg-HLS gestartet: Session=%s, Typ=%s", session_id, data["media_type"])
+    main.logger.info(
+        "FFmpeg-HLS gestartet: Session=%s, Typ=%s, Start=%.3fs",
+        session_id,
+        data["media_type"],
+        seek_offset,
+    )
     return process
+
+
+def _duration_from_item(item: dict[str, Any]) -> float | None:
+    for key in ("duration", "video_duration", "movie_length", "length"):
+        try:
+            duration = float(item.get(key))
+        except (TypeError, ValueError):
+            continue
+        if duration >= 60:
+            return duration
+
+    for key in ("time", "runtime"):
+        raw_value = item.get(key)
+        try:
+            minutes = float(raw_value)
+        except (TypeError, ValueError):
+            minutes = 0
+        if 10 <= minutes <= 600:
+            return minutes * 60
+
+        value = str(raw_value or "").strip()
+        if ":" not in value:
+            continue
+        try:
+            parts = [float(part) for part in value.split(":")]
+        except ValueError:
+            continue
+        if len(parts) == 2:
+            duration = parts[0] * 60 + parts[1]
+        elif len(parts) == 3:
+            duration = parts[0] * 3600 + parts[1] * 60 + parts[2]
+        else:
+            continue
+        if duration >= 60:
+            return duration
+    return None
+
+
+async def _probe_duration(url: str, portal: StalkerClient) -> float | None:
+    headers = portal.portal_headers_for_stream()
+    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
+    ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
+    command = [
+        "ffprobe", "-v", "error", "-rw_timeout", "10000000",
+        "-headers", ffmpeg_headers,
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        url,
+    ]
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=12)
+        duration = float(stdout.decode("utf-8", errors="replace").strip())
+    except (OSError, ValueError, asyncio.TimeoutError):
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        return None
+    return duration if duration >= 60 else None
 
 
 async def _ensure_hls_session(
@@ -233,7 +310,7 @@ async def _refresh_live_ticket(
     return {"url": f"/hls/{ticket}/index.m3u8", "ready": "true", "persistent_proxy": "true"}
 
 
-async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClient) -> dict[str, str]:
+async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClient) -> dict[str, Any]:
     media_type = str(payload.get("type", ""))
     command = str(payload.get("cmd", ""))
     series = payload.get("series")
@@ -248,12 +325,46 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
         playback_url = f"/stream/{ticket}"
     else:
         playback_url = f"/hls/{ticket}/index.m3u8"
+    duration = None
+    if media_type in {"vod", "series"}:
+        duration = _duration_from_item(item) or await _probe_duration(url, portal)
     main.logger.info(
         "Wiedergabe vorbereitet: Typ=%s, Format=%s",
         media_type,
         "direct-hls" if main.is_hls(url) else ("ts-proxy-hls" if media_type == "itv" else "ffmpeg-hls"),
     )
-    return {"url": playback_url, "stream_type": "hls"}
+    return {
+        "url": playback_url,
+        "stream_type": "hls",
+        "duration": round(duration, 3) if duration else None,
+        "seekable": bool(duration and not main.is_hls(url)),
+    }
+
+
+async def _seek_vod(
+    ticket: str,
+    payload: dict[str, Any],
+    settings: Settings = Depends(main.settings_dependency),
+) -> dict[str, Any]:
+    data = _read_ticket(ticket, settings)
+    if data.get("media_type") not in {"vod", "series"}:
+        raise HTTPException(status_code=400, detail="Film- oder Serien-Ticket erforderlich")
+    try:
+        position = max(0.0, float(payload.get("position", 0)))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Ungültige Wiedergabeposition") from exc
+
+    session_id = main.session_id_for(ticket)
+    session = main._hls_sessions.get(session_id)
+    if session is not None:
+        from .live_runtime_fix import stop_hls_session
+        await stop_hls_session(session_id, session)
+    _vod_seek_offsets[session_id] = position
+    main.logger.info("VOD-Sprung vorbereitet: Session=%s, Position=%.3fs", session_id, position)
+    return {
+        "url": f"/hls/{ticket}/index.m3u8?_seek={int(time.time() * 1000)}",
+        "position": position,
+    }
 
 
 def install() -> None:
@@ -267,6 +378,8 @@ def install() -> None:
             _refresh_live_ticket,
             methods=["POST"],
         )
+    if not any(getattr(route, "path", None) == "/api/vod-seek/{ticket}" for route in main.app.routes):
+        main.app.add_api_route("/api/vod-seek/{ticket}", _seek_vod, methods=["POST"])
 
     for route in main.app.routes:
         if getattr(route, "path", None) == "/api/play" and "POST" in getattr(route, "methods", set()):
