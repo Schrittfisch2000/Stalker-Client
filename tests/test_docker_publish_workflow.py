@@ -17,6 +17,10 @@ class DockerPublishWorkflowTests(unittest.TestCase):
         self.assertIn("branches:\n      - main", self.workflow)
         self.assertIn("workflow_dispatch:", self.workflow)
 
+    def test_release_cancels_outdated_runs(self) -> None:
+        self.assertIn("group: docker-release-${{ github.repository }}", self.workflow)
+        self.assertIn("cancel-in-progress: true", self.workflow)
+
     def test_release_has_write_permission_for_tags_releases_and_reporting(self) -> None:
         self.assertIn("contents: write", self.workflow)
         self.assertIn("issues: write", self.workflow)
