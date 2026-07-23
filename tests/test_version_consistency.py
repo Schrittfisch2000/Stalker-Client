@@ -7,11 +7,15 @@ from pathlib import Path
 from app.version import APP_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
+OFFICIAL_IMAGE = "schrittfisch2000/stalker-client:latest"
 
 
 class VersionConsistencyTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (ROOT / relative_path).read_text(encoding="utf-8")
+
+    def test_version_file_matches_application(self) -> None:
+        self.assertEqual(self.read("VERSION").strip(), APP_VERSION)
 
     def test_readme_current_version_matches_application(self) -> None:
         readme = self.read("README.md")
@@ -31,22 +35,27 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertEqual(badge_match.group(1), APP_VERSION)
         self.assertEqual(cache_versions, {APP_VERSION})
 
-    def test_root_compose_matches_application_version(self) -> None:
-        compose = self.read("docker-compose.yml")
-        self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}", compose)
-        self.assertIn(f'de.stalker-client.version: "{APP_VERSION}"', compose)
+    def assert_registry_compose(self, relative_path: str) -> None:
+        compose = self.read(relative_path)
+        self.assertIn(f"image: {OFFICIAL_IMAGE}", compose)
+        self.assertIn("pull_policy: always", compose)
+        self.assertNotIn("\n    build:", compose)
 
-    def test_standard_compose_matches_application_version(self) -> None:
+    def test_root_compose_uses_official_registry_image(self) -> None:
+        self.assert_registry_compose("docker-compose.yml")
+
+    def test_ugreen_ugos_compose_uses_official_registry_image(self) -> None:
+        self.assert_registry_compose("docker-compose-ugreen.yml")
+
+    def test_standard_developer_compose_matches_application_version(self) -> None:
         compose = self.read("deploy/standard/docker-compose.yml")
         self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}", compose)
+        self.assertIn("build:", compose)
 
-    def test_ugreen_cli_compose_matches_application_version(self) -> None:
+    def test_ugreen_cli_developer_compose_matches_application_version(self) -> None:
         compose = self.read("deploy/ugreen/docker-compose.yml")
         self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}-ugreen", compose)
-
-    def test_ugreen_ugos_compose_matches_application_version(self) -> None:
-        compose = self.read("docker-compose-ugreen.yml")
-        self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}-ugreen", compose)
+        self.assertIn("build:", compose)
 
 
 if __name__ == "__main__":
