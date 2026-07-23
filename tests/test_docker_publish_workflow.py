@@ -17,8 +17,9 @@ class DockerPublishWorkflowTests(unittest.TestCase):
         self.assertIn("branches:\n      - main", self.workflow)
         self.assertIn("workflow_dispatch:", self.workflow)
 
-    def test_release_has_write_permission_for_tags_and_releases(self) -> None:
+    def test_release_has_write_permission_for_tags_releases_and_reporting(self) -> None:
         self.assertIn("contents: write", self.workflow)
+        self.assertIn("issues: write", self.workflow)
         self.assertIn('git push origin "$TAG"', self.workflow)
         self.assertIn('gh release create "$TAG"', self.workflow)
 
@@ -34,6 +35,12 @@ class DockerPublishWorkflowTests(unittest.TestCase):
     def test_release_uses_docker_hub_secrets(self) -> None:
         self.assertIn("secrets.DOCKERHUB_USERNAME", self.workflow)
         self.assertIn("secrets.DOCKERHUB_TOKEN", self.workflow)
+
+    def test_release_reports_success_and_failure_with_run_link(self) -> None:
+        self.assertIn("Veröffentlichung erfolgreich melden", self.workflow)
+        self.assertIn("Veröffentlichung fehlgeschlagen melden", self.workflow)
+        self.assertIn("actions/runs/${GITHUB_RUN_ID}", self.workflow)
+        self.assertIn('REPORT_ISSUE: "19"', self.workflow)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: docker-release-${{ github.repository }}
@@ -127,3 +128,26 @@ jobs:
               --title "Stalker Client ${VERSION}" \
               --generate-notes
           fi
+
+      - name: Veröffentlichung erfolgreich melden
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_ISSUE: "19"
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$REPORT_ISSUE" --body "✅ Docker-Release ${TAG} erfolgreich. Actions-Lauf: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Veröffentlichung fehlgeschlagen melden
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_ISSUE: "19"
+        run: |
+          set -uo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION 2>/dev/null || true)"
+          [[ -n "$VERSION" ]] || VERSION="unbekannt"
+          gh issue comment "$REPORT_ISSUE" --body "❌ Docker-Release v${VERSION} fehlgeschlagen. Actions-Lauf: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
