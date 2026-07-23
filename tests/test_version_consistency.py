@@ -8,6 +8,12 @@ from app.version import APP_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 OFFICIAL_IMAGE = "schrittfisch2000/stalker-client:latest"
+REMOVED_DEPLOYMENT_FILES = (
+    "docker-compose-ugreen.yml",
+    "docker-compose-synology.yml",
+    "deploy/standard/docker-compose.yml",
+    "deploy/ugreen/docker-compose.yml",
+)
 
 
 class VersionConsistencyTests(unittest.TestCase):
@@ -19,9 +25,16 @@ class VersionConsistencyTests(unittest.TestCase):
 
     def test_readme_current_version_matches_application(self) -> None:
         readme = self.read("README.md")
-        match = re.search(r"\*\*Aktuelle Version: ([0-9]+\.[0-9]+\.[0-9]+)", readme)
+        match = re.search(r"\*\*Aktuelle Version: ([0-9]+\.[0-9]+\.[0-9]+)\*\*", readme)
         self.assertIsNotNone(match, "README enthält keine aktuelle Versionsangabe")
         self.assertEqual(match.group(1), APP_VERSION)
+
+    def test_readme_is_limited_to_ugreen_deployment(self) -> None:
+        readme = self.read("README.md")
+        self.assertIn("UGREEN NAS", readme)
+        self.assertNotIn("Windows mit Docker", readme)
+        self.assertNotIn("macOS mit Docker", readme)
+        self.assertNotIn("Synology NAS", readme)
 
     def test_frontend_version_markers_match_application(self) -> None:
         template = self.read("app/templates/index.html")
@@ -35,27 +48,18 @@ class VersionConsistencyTests(unittest.TestCase):
         self.assertEqual(badge_match.group(1), APP_VERSION)
         self.assertEqual(cache_versions, {APP_VERSION})
 
-    def assert_registry_compose(self, relative_path: str) -> None:
-        compose = self.read(relative_path)
+    def test_single_compose_is_ugreen_registry_deployment(self) -> None:
+        compose = self.read("docker-compose.yml")
+        self.assertIn("name: stalker-client-ugreen", compose)
         self.assertIn(f"image: {OFFICIAL_IMAGE}", compose)
         self.assertIn("pull_policy: always", compose)
+        self.assertIn("./konfiguration:/konfiguration", compose)
         self.assertNotIn("\n    build:", compose)
 
-    def test_root_compose_uses_official_registry_image(self) -> None:
-        self.assert_registry_compose("docker-compose.yml")
-
-    def test_ugreen_ugos_compose_uses_official_registry_image(self) -> None:
-        self.assert_registry_compose("docker-compose-ugreen.yml")
-
-    def test_standard_developer_compose_matches_application_version(self) -> None:
-        compose = self.read("deploy/standard/docker-compose.yml")
-        self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}", compose)
-        self.assertIn("build:", compose)
-
-    def test_ugreen_cli_developer_compose_matches_application_version(self) -> None:
-        compose = self.read("deploy/ugreen/docker-compose.yml")
-        self.assertIn(f"image: stalker-client-deutsch:{APP_VERSION}-ugreen", compose)
-        self.assertIn("build:", compose)
+    def test_obsolete_deployment_files_are_removed(self) -> None:
+        for relative_path in REMOVED_DEPLOYMENT_FILES:
+            with self.subTest(path=relative_path):
+                self.assertFalse((ROOT / relative_path).exists())
 
 
 if __name__ == "__main__":

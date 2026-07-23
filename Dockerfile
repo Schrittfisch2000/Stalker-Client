@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="Stalker Client Deutsch" \
-      org.opencontainers.image.description="Deutscher Web-Client für kompatible Stalker- und MAG-Portale" \
+LABEL org.opencontainers.image.title="Stalker Client für UGREEN NAS" \
+      org.opencontainers.image.description="Deutscher Docker-Web-Client für kompatible Stalker- und MAG-Portale auf UGREEN NAS" \
       org.opencontainers.image.vendor="Schrittfisch2000" \
       org.opencontainers.image.source="https://github.com/Schrittfisch2000/Stalker-Client"
 

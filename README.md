@@ -1,153 +1,133 @@
-# Stalker Client
+# Stalker Client für UGREEN NAS
 
-Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale.
+**Aktuelle Version: 1.0.30**
+
+Dieses Repository stellt den Stalker Client ausschließlich als Docker-Compose-Projekt für UGREEN-NAS mit UGOS Pro bereit.
 
 > Nutze den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt.
 
-## Was kann der Docker-Container?
+## Funktionen
 
 - Live-TV, Filme und Serien im Browser
 - mehrere Portale und Benutzerkonten
 - Favoriten und Wiedergabefortschritt
 - Downloads, sofern sie vom Anbieter erlaubt sind
-- persistente Konfiguration außerhalb des Containers
-- Healthcheck und automatischer Neustart
-- Multi-Arch-Image für `linux/amd64` und `linux/arm64`
+- dauerhafte Konfiguration außerhalb des Containers
+- automatischer Neustart und Healthcheck
+- Docker-Image für UGREEN-Systeme mit `amd64` oder `arm64`
 
-Damit läuft das Image auf:
+Docker wählt auf der UGREEN NAS automatisch die passende Architektur aus.
 
-- Windows mit Docker Desktop
-- Linux mit Docker Engine
-- macOS mit Docker Desktop, Intel und Apple Silicon
-- UGREEN NAS mit Docker/Compose
-- Synology NAS mit Container Manager
+## Benötigte Dateien
 
-Docker wählt automatisch die passende Architektur aus.
-
-## Schnellinstallation
-
-```bash
-git clone https://github.com/Schrittfisch2000/Stalker-Client.git
-cd Stalker-Client
-mkdir -p konfiguration
-docker compose up -d
-```
-
-Danach im Browser öffnen:
+Für die Installation auf der NAS wird nur diese Datei benötigt:
 
 ```text
-http://localhost:8080
+docker-compose.yml
 ```
 
-Das Standard-Compose verwendet das Docker-Hub-Image:
+Der Container wird direkt von Docker Hub geladen:
 
 ```text
 schrittfisch2000/stalker-client:latest
 ```
 
-## Direkt mit `docker run`
+Die Anwendung wird auf der NAS nicht lokal aus dem Quellcode gebaut.
 
-```bash
-docker run -d \
-  --name stalker-client-deutsch \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -e TZ=Europe/Berlin \
-  -v "$(pwd)/konfiguration:/konfiguration" \
-  schrittfisch2000/stalker-client:latest
-```
+## Installation über UGOS Pro
 
-Unter Windows PowerShell kann statt `$(pwd)` `${PWD}` verwendet werden.
+1. Auf der UGREEN NAS einen Projektordner anlegen, zum Beispiel:
 
-## UGREEN NAS
+   ```text
+   /volume1/docker/stalker-client
+   ```
 
-1. Repository als ZIP herunterladen und auf die NAS kopieren.
-2. Im Projektordner den Ordner `konfiguration` anlegen.
-3. In UGOS **Docker → Projekte/Compose** öffnen.
-4. `docker-compose-ugreen.yml` auswählen.
-5. Projekt erstellen und starten.
-6. `http://IP-DER-NAS:8080` öffnen.
+2. Darin den Ordner für die dauerhafte Konfiguration anlegen:
 
-## Synology NAS
+   ```text
+   konfiguration
+   ```
 
-Voraussetzung: **Container Manager** ist installiert.
+3. Die Datei `docker-compose.yml` aus diesem Repository in den Projektordner kopieren.
+4. In UGOS Pro **Docker → Projekte/Compose** öffnen.
+5. Den Projektordner auswählen und das Compose-Projekt erstellen.
+6. Das Projekt starten.
+7. Im Browser öffnen:
 
-1. Repository als ZIP herunterladen und in einen gemeinsamen Ordner kopieren.
-2. Im Projektordner den Ordner `konfiguration` anlegen.
-3. In Container Manager **Projekt → Erstellen** öffnen.
-4. Den Projektordner auswählen und `docker-compose-synology.yml` verwenden.
-5. Projekt bauen und starten.
-6. `http://IP-DER-NAS:8080` öffnen.
-
-Alternativ kann das Image in Container Manager direkt aus der Registry geladen werden:
-
-```text
-schrittfisch2000/stalker-client:latest
-```
-
-Dabei Port `8080` freigeben und einen NAS-Ordner nach `/konfiguration` einbinden.
+   ```text
+   http://IP-DER-UGREEN-NAS:8080
+   ```
 
 ## Updates
+
+Die Compose-Datei verwendet `pull_policy: always`. Beim erneuten Bereitstellen des Projekts lädt UGOS deshalb das aktuelle Image von Docker Hub.
+
+Vorgehen in UGOS Pro:
+
+1. Projekt stoppen.
+2. Projekt aktualisieren oder neu bereitstellen.
+3. Darauf achten, dass der Ordner `konfiguration` erhalten bleibt.
+4. Projekt wieder starten.
+
+Optional über das Terminal:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-Auf UGREEN oder Synology das Projekt neu bereitstellen, ohne den Ordner `konfiguration` zu löschen.
-
 ## Port ändern
 
-```bash
-STALKER_PORT=8180 docker compose up -d
+Standardmäßig ist die Anwendung über Port `8080` erreichbar.
+
+In den Umgebungsvariablen des UGOS-Projekts kann ein anderer Port gesetzt werden:
+
+```text
+STALKER_PORT=8180
 ```
 
-Danach ist der Client unter `http://localhost:8180` erreichbar.
+Danach lautet die Adresse beispielsweise:
 
-## Daten und Sicherheit
+```text
+http://IP-DER-UGREEN-NAS:8180
+```
 
-Die Konfiguration liegt dauerhaft im Ordner:
+## Konfiguration und Sicherung
+
+Alle Laufzeitdaten liegen im Ordner:
 
 ```text
 ./konfiguration
 ```
 
-Dieser Ordner kann Portaladressen, MAC-Adressen, Benutzerkonten, Tokens, Geheimnisse und Logs enthalten. Er darf nicht veröffentlicht oder weitergegeben werden.
+Diesen Ordner vor Updates oder Änderungen sichern. Er kann unter anderem Portaladressen, MAC-Adressen, Benutzerkonten, Tokens, Signaturschlüssel und Logs enthalten.
+
+Der Ordner darf niemals in Git eingecheckt, veröffentlicht oder ungeschwärzt weitergegeben werden.
 
 ## Diagnose
+
+Die Container-Protokolle können direkt in UGOS Pro unter dem Docker-Projekt geöffnet werden.
+
+Optional über das Terminal:
 
 ```bash
 docker compose ps
 docker compose logs -f --tail=300
 ```
 
-## Docker Hub veröffentlichen
+Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
 
-Das Repository enthält einen GitHub-Actions-Workflow für Multi-Arch-Builds auf `linux/amd64` und `linux/arm64`.
+## Automatischer Docker-Build
 
-Im GitHub-Repository müssen unter **Settings → Secrets and variables → Actions** diese Secrets angelegt werden:
+GitHub Actions prüft bei Änderungen:
 
-```text
-DOCKERHUB_USERNAME
-DOCKERHUB_TOKEN
-```
+- Python-Unittests
+- JavaScript-Syntax
+- die UGREEN-Compose-Datei
+- einen vollständigen Docker-Build
+- versehentlich eingecheckte Konfigurations- oder Geheimnisdateien
 
-`DOCKERHUB_TOKEN` sollte ein Docker-Hub-Access-Token sein, nicht das Kontopasswort.
-
-Danach kann der Workflow **Publish Docker image** manuell gestartet werden. Er veröffentlicht:
-
-```text
-schrittfisch2000/stalker-client:v<VERSION>
-schrittfisch2000/stalker-client:latest
-```
-
-Die Versionsnummer wird aus der Datei `VERSION` gelesen.
-
-## Lokaler Entwickler-Build
-
-```bash
-docker compose -f deploy/standard/docker-compose.yml up -d --build
-```
+Nach erfolgreichen Prüfungen auf `main` wird das UGREEN-kompatible Multi-Arch-Image für `linux/amd64` und `linux/arm64` auf Docker Hub veröffentlicht.
 
 ## Lizenz und Nutzung
 
