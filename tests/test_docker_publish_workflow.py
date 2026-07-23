@@ -30,53 +30,43 @@ class DockerPublishWorkflowTests(unittest.TestCase):
         self.assertNotIn("deploy/standard", self.ci)
         self.assertNotIn("deploy/ugreen", self.ci)
 
-    def test_release_starts_only_after_successful_main_tests(self) -> None:
-        self.assertIn("release-plan:", self.ci)
+    def test_publish_starts_only_after_successful_main_tests(self) -> None:
+        self.assertIn("publish-dockerhub:", self.ci)
         self.assertIn("needs: test", self.ci)
         self.assertIn("github.event_name != 'pull_request'", self.ci)
         self.assertIn("github.ref == 'refs/heads/main'", self.ci)
-        self.assertIn("Docker-Hub-Zugang prüfen", self.ci)
 
-    def test_missing_dockerhub_secrets_skip_publish_without_failing_ci(self) -> None:
-        self.assertIn("DOCKERHUB_AVAILABLE=false", self.ci)
-        self.assertIn("Publishing wird übersprungen", self.ci)
-        self.assertIn('${DOCKERHUB_AVAILABLE:-false}', self.ci)
-        self.assertIn('echo "publish=false" >> "$GITHUB_OUTPUT"', self.ci)
+    def test_publish_uses_dockerhub_secrets(self) -> None:
+        self.assertIn("docker/login-action@v3", self.ci)
+        self.assertIn("secrets.DOCKERHUB_USERNAME", self.ci)
+        self.assertIn("secrets.DOCKERHUB_TOKEN", self.ci)
+        self.assertNotIn("Publishing wird übersprungen", self.ci)
+        self.assertNotIn("DOCKERHUB_AVAILABLE=false", self.ci)
 
-    def test_architectures_build_on_native_runners(self) -> None:
-        self.assertIn("runner: ubuntu-24.04", self.ci)
-        self.assertIn("runner: ubuntu-24.04-arm", self.ci)
-        self.assertIn("platform: linux/amd64", self.ci)
-        self.assertIn("platform: linux/arm64", self.ci)
-        self.assertNotIn("docker/setup-qemu-action", self.ci)
-
-    def test_architecture_builds_run_in_parallel_matrix(self) -> None:
-        self.assertIn("build-architecture:", self.ci)
-        self.assertIn("fail-fast: false", self.ci)
-        self.assertIn("runs-on: ${{ matrix.runner }}", self.ci)
-        self.assertIn("platforms: ${{ matrix.platform }}", self.ci)
-        self.assertIn("-${{ matrix.arch }}", self.ci)
-
-    def test_architecture_caches_are_separate(self) -> None:
-        self.assertIn("cache-from: type=gha,scope=stalker-${{ matrix.arch }}", self.ci)
-        self.assertIn("cache-to: type=gha,mode=max,scope=stalker-${{ matrix.arch }}", self.ci)
-
-    def test_manifest_combines_both_architectures(self) -> None:
-        self.assertIn("docker buildx imagetools create", self.ci)
-        self.assertIn('"$IMAGE_NAME:$TAG-amd64"', self.ci)
-        self.assertIn('"$IMAGE_NAME:$TAG-arm64"', self.ci)
-        self.assertIn('{"amd64", "arm64"} - architectures', self.ci)
+    def test_publish_builds_amd64_and_arm64(self) -> None:
+        self.assertIn("docker/setup-qemu-action@v3", self.ci)
+        self.assertIn("docker/setup-buildx-action@v3", self.ci)
+        self.assertIn("docker/build-push-action@v6", self.ci)
+        self.assertIn("platforms: linux/amd64,linux/arm64", self.ci)
+        self.assertIn("push: true", self.ci)
 
     def test_release_publishes_all_public_tags(self) -> None:
-        self.assertIn('IMAGE_NAME: schrittfisch2000/stalker-client', self.ci)
-        self.assertIn('--tag "$IMAGE_NAME:$VERSION"', self.ci)
-        self.assertIn('--tag "$IMAGE_NAME:$TAG"', self.ci)
-        self.assertIn('--tag "$IMAGE_NAME:latest"', self.ci)
+        self.assertIn("IMAGE_NAME: schrittfisch2000/stalker-client", self.ci)
+        self.assertIn("${{ env.IMAGE_NAME }}:latest", self.ci)
+        self.assertIn("${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}", self.ci)
+        self.assertIn("${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}", self.ci)
+
+    def test_manifest_verifies_both_architectures(self) -> None:
+        self.assertIn("Docker-Hub-Manifest prüfen", self.ci)
+        self.assertIn("docker buildx imagetools inspect", self.ci)
+        self.assertIn('{"amd64", "arm64"} - architectures', self.ci)
 
     def test_release_creates_git_tag_and_github_release_last(self) -> None:
-        manifest_position = self.ci.index("Gemeinsames amd64- und arm64-Manifest erstellen")
-        tag_position = self.ci.index("Git-Tag erstellen")
-        release_position = self.ci.index("GitHub Release erstellen")
+        publish_position = self.ci.index("Multi-Arch-Image bauen und veröffentlichen")
+        manifest_position = self.ci.index("Docker-Hub-Manifest prüfen")
+        tag_position = self.ci.index("Git-Tag erstellen, falls er fehlt")
+        release_position = self.ci.index("GitHub Release erstellen, falls es fehlt")
+        self.assertLess(publish_position, manifest_position)
         self.assertLess(manifest_position, tag_position)
         self.assertLess(tag_position, release_position)
         self.assertIn('git push origin "$TAG"', self.ci)
