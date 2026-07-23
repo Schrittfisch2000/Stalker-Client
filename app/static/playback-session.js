@@ -59,8 +59,8 @@
   const originalPlayItem = playItem;
   const originalDestroyPlayer = destroyPlayer;
 
-  attachPlayer = function attachPlayerWithSessionTracking(url, isLive = false) {
-    const result = originalAttachPlayer(url, isLive);
+  attachPlayer = function attachPlayerWithSessionTracking(url, isLive = false, playback = {}) {
+    const result = originalAttachPlayer(url, isLive, playback);
     activeTicket = ticketFromPlaybackUrl(url);
     state.activePlaybackTicket = activeTicket;
     return result;

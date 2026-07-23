@@ -229,10 +229,15 @@ def _duration_from_item(item: dict[str, Any]) -> float | None:
     return None
 
 
-def _play_response(playback_url: str, duration: float | None, seekable: bool) -> dict[str, str]:
+def _play_response(
+    playback_url: str,
+    duration: float | None,
+    seekable: bool,
+    stream_type: str = "hls",
+) -> dict[str, str]:
     return {
         "url": playback_url,
-        "stream_type": "hls",
+        "stream_type": stream_type,
         "duration": f"{duration:.3f}" if duration else "",
         "seekable": "true" if seekable else "false",
     }
@@ -331,15 +336,20 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
     ticket = _create_ticket(url, settings, media_type, playback)
     if main.is_hls(url):
         playback_url = f"/stream/{ticket}"
+        stream_type = "hls"
+    elif media_type == "itv":
+        playback_url = f"/stream/{ticket}"
+        stream_type = "mpegts"
     else:
         playback_url = f"/hls/{ticket}/index.m3u8"
+        stream_type = "hls"
     duration = None
     if media_type in {"vod", "series"}:
         duration = _duration_from_item(item) or await _probe_duration(url, portal)
     main.logger.info(
         "Wiedergabe vorbereitet: Typ=%s, Format=%s, Dauer=%s, Spulbar=%s",
         media_type,
-        "direct-hls" if main.is_hls(url) else ("ts-proxy-hls" if media_type == "itv" else "ffmpeg-hls"),
+        "direct-hls" if main.is_hls(url) else ("browser-mpegts" if media_type == "itv" else "ffmpeg-hls"),
         f"{duration:.3f}s" if duration else "unbekannt",
         bool(duration and not main.is_hls(url)),
     )
@@ -347,6 +357,7 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
         playback_url,
         round(duration, 3) if duration else None,
         bool(duration and not main.is_hls(url)),
+        stream_type,
     )
 
 

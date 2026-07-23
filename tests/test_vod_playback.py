@@ -32,6 +32,12 @@ class VodDurationTests(unittest.TestCase):
         self.assertEqual(response["duration"], "")
         self.assertEqual(response["seekable"], "false")
 
+    def test_play_response_can_select_browser_mpegts_for_live_tv(self) -> None:
+        response = _play_response("/stream/ticket", None, False, "mpegts")
+
+        self.assertEqual(response["url"], "/stream/ticket")
+        self.assertEqual(response["stream_type"], "mpegts")
+
     def test_browser_removes_native_controls_for_seekable_vod(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "app/static/vod-controls.js"
@@ -39,6 +45,19 @@ class VodDurationTests(unittest.TestCase):
 
         self.assertIn("video.toggleAttribute('controls', !customControls)", source)
         self.assertIn("duration > 0 && seekable", source)
+
+    def test_browser_live_player_uses_mpegts_and_cleans_it_up(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "app/static/app.js").read_text(encoding="utf-8")
+        template = (root / "app/templates/index.html").read_text(encoding="utf-8")
+        sessions = (root / "app/static/playback-session.js").read_text(encoding="utf-8")
+
+        self.assertIn("mpegts.js@1.8.0", template)
+        self.assertIn("playback.stream_type === 'mpegts'", source)
+        self.assertIn("mpegts.createPlayer", source)
+        self.assertIn("state.mpegts.unload()", source)
+        self.assertIn("state.mpegts.destroy()", source)
+        self.assertIn("originalAttachPlayer(url, isLive, playback)", sessions)
 
 
 if __name__ == "__main__":
