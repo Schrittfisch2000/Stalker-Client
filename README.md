@@ -1,15 +1,29 @@
 # Stalker Client
 
-**Aktuelle Version: 1.0.29 – sicherer HTTPS-Bildproxy und schneller große Kataloge**
+**Aktuelle Version: 1.0.30 – offizielles Multi-Arch-Docker-Image und vereinheitlichte Updates**
 
 Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portale. Unterstützt Live-TV, Filme, Serien, mehrere Portale, Benutzerkonten, Favoriten, Wiedergabefortschritt und Downloads.
 
 > Verwende den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt.
 
-## Neu in Version 1.0.29
+## Neu in Version 1.0.30
+
+- offizielles Docker-Hub-Image: `schrittfisch2000/stalker-client`
+- dasselbe Image für UGREEN/NAS, Linux, Windows Docker Desktop und macOS Docker Desktop
+- Multi-Arch-Veröffentlichung für `linux/amd64` und `linux/arm64`
+- automatische Veröffentlichung durch GitHub Actions bei Versions-Tags wie `v1.0.30`
+- Tags `v1.0.30` und `latest` werden gemeinsam veröffentlicht
+- Standard-Compose-Dateien laden das Registry-Image statt lokal zu bauen
+- `pull_policy: always` prüft bei jedem erneuten Bereitstellen auf ein aktuelles Image
+- lokale Entwickler-Compose-Dateien bleiben unter `deploy/` erhalten
+- Versionsnummern in Anwendung, Frontend, Cache-Schlüsseln, README und Entwickler-Compose-Dateien werden automatisch geprüft
+
+Version 1.0.30 enthält außerdem alle Sicherheits-, HTTPS-Bildproxy- und Katalogverbesserungen aus Version 1.0.29.
+
+## Enthaltene Sicherheits- und Katalogverbesserungen
 
 - sicherer Same-Origin-Bildproxy für HTTPS- und Reverse-Proxy-Zugriff
-- Senderlogos und Poster funktionieren auch über eine HTTPS-Domain, wenn das Portal Bilder nur per HTTP anbietet
+- Senderlogos und Poster funktionieren über eine HTTPS-Domain, wenn das Portal Bilder nur per HTTP anbietet
 - signierte Bild-Tickets, Portalbindung und Schutz vor offenen SSRF-Proxys
 - fremde private, lokale und reservierte Ziele werden blockiert
 - maximal 5 MiB pro Bild, begrenzte Weiterleitungen und erlaubte Rasterbildformate
@@ -19,11 +33,10 @@ Dockerisierter, deutschsprachiger Web-Client für kompatible Stalker-/MAG-Portal
 - Bilder laden erst in der Nähe des sichtbaren Bereichs
 - Schutz vor tausenden gleichzeitigen Bildanfragen
 - vollständige `.gitignore`- und `.dockerignore`-Regeln für Konfiguration, Geheimnisse und Logs
-- GitHub Actions prüft Secrets, JavaScript-Syntax, Unittests, alle Compose-Dateien und den Docker-Build
 
-## Getesteter Stand
+## Getesteter Funktionsstand
 
-Version 1.0.29 wurde nach den Änderungen auf einer UGREEN-NAS über die lokale Adresse und über eine externe HTTPS-Zapto-Domain geprüft. Kategorien, Kataloge und Portalbilder wurden erfolgreich geladen.
+Die Portal-, Katalog- und Bildproxy-Funktionen wurden auf einer UGREEN-NAS über die lokale Adresse und über eine externe HTTPS-Zapto-Domain geprüft. Kategorien, Kataloge und Portalbilder wurden erfolgreich geladen.
 
 Die Wiedergabefunktionen aus Version 1.0.28 bleiben enthalten:
 
@@ -36,18 +49,26 @@ Die Wiedergabefunktionen aus Version 1.0.28 bleiben enthalten:
 
 ## Unterstützte Plattformen
 
-- Windows mit Docker Desktop
-- Linux mit Docker Engine und Docker Compose
-- macOS mit Docker Desktop
-- UGREEN UGOS Pro
+Das veröffentlichte Image unterstützt:
 
-## Schnellstart mit Docker
+- Windows mit Docker Desktop (`linux/amd64`)
+- Linux mit Docker Engine und Docker Compose (`linux/amd64` oder `linux/arm64`)
+- macOS mit Docker Desktop auf Intel (`linux/amd64`)
+- macOS mit Docker Desktop auf Apple Silicon (`linux/arm64`)
+- UGREEN UGOS Pro auf unterstützten AMD64- oder ARM64-Modellen
+
+Docker wählt aus dem Multi-Arch-Image automatisch die passende Architektur aus.
+
+## Schnellstart mit Docker Hub
+
+Repository klonen oder als ZIP herunterladen, damit die Compose-Datei vorhanden ist:
 
 ```bash
 git clone https://github.com/Schrittfisch2000/Stalker-Client.git
 cd Stalker-Client
 mkdir -p konfiguration
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 Danach:
@@ -56,14 +77,43 @@ Danach:
 http://localhost:8080
 ```
 
+Die Standard-Compose-Datei verwendet:
+
+```yaml
+image: schrittfisch2000/stalker-client:latest
+pull_policy: always
+```
+
+Für eine fest angeheftete Version kann der Image-Eintrag beispielsweise auf diesen Tag gesetzt werden:
+
+```yaml
+image: schrittfisch2000/stalker-client:v1.0.30
+```
+
+## Updates auf Windows, Linux und macOS
+
+Im Projektordner:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Die Konfiguration bleibt erhalten, weil nur dieser Ordner in den Container eingebunden wird:
+
+```yaml
+volumes:
+  - ./konfiguration:/konfiguration
+```
+
 ## Installation auf UGREEN über die Weboberfläche
 
-Viele UGREEN-Systeme stellen im Terminal weder `git` noch `curl` oder `wget` bereit.
+Viele UGREEN-Systeme stellen im Terminal weder `git` noch `curl` oder `wget` bereit. Für die einmalige Einrichtung:
 
-1. Repository auf dem Computer über **Code → Download ZIP** herunterladen.
+1. Repository auf einem Computer über **Code → Download ZIP** herunterladen.
 2. ZIP entpacken.
 3. Den Projektordner per SMB auf die NAS kopieren.
-4. Den bestehenden Ordner `konfiguration` bei Updates behalten.
+4. Einen Ordner `konfiguration` im Projektordner anlegen oder den vorhandenen Ordner behalten.
 5. In UGOS **Docker → Projekte/Compose** öffnen.
 6. Den Hauptordner `Stalker-Client` als Projektordner auswählen.
 7. Diese Compose-Datei aus dem Hauptordner verwenden:
@@ -72,7 +122,14 @@ Viele UGREEN-Systeme stellen im Terminal weder `git` noch `curl` oder `wget` ber
 docker-compose-ugreen.yml
 ```
 
-8. Projekt bauen und starten.
+8. Projekt erstellen und starten.
+
+Die UGREEN-Compose-Datei verwendet ebenfalls:
+
+```yaml
+image: schrittfisch2000/stalker-client:latest
+pull_policy: always
+```
 
 Danach:
 
@@ -80,37 +137,66 @@ Danach:
 http://IP-DER-NAS:8080
 ```
 
+### Updates auf UGREEN
+
+Nach einer neuen Veröffentlichung musst du keine Programmdateien mehr ersetzen:
+
+1. In UGOS **Docker → Projekte/Compose** öffnen.
+2. Das Stalker-Client-Projekt auswählen.
+3. **Neu bereitstellen**, **Redeploy** oder **Erneut erstellen** wählen.
+4. Keine Volumes und keine Projektdaten löschen.
+5. UGOS lädt wegen `pull_policy: always` das aktuelle `latest`-Image und startet den Container neu.
+6. Browser vollständig neu laden: macOS `Cmd + Shift + R`, Windows/Linux `Strg + F5`.
+
+Der Ordner `konfiguration` bleibt dabei erhalten.
+
 ### Wichtig für UGOS
 
-Nicht `deploy/ugreen/docker-compose.yml` in der Weboberfläche auswählen. Manche UGOS-Versionen verschieben die Compose-Datei intern und lösen `../..` dann falsch auf. Der typische Fehler lautet:
+Für die UGOS-Weboberfläche ausschließlich die root-nahe Datei verwenden:
 
 ```text
-lstat /volume2/Dockerfile: no such file or directory
+docker-compose-ugreen.yml
 ```
 
-Die root-nahe `docker-compose-ugreen.yml` verwendet korrekt:
+Nicht `deploy/ugreen/docker-compose.yml` auswählen. Diese Datei ist für lokale Entwickler-Builds über die Kommandozeile vorgesehen und verwendet einen relativen Build-Kontext.
 
-```yaml
-build:
-  context: .
-  dockerfile: Dockerfile
+## Lokaler Entwickler-Build
 
-volumes:
-  - ./konfiguration:/konfiguration
+Wer Änderungen am Quellcode entwickeln und lokal bauen möchte, verwendet eine Compose-Datei unter `deploy/`:
+
+Standard:
+
+```bash
+docker compose -f deploy/standard/docker-compose.yml up -d --build
 ```
 
-## Update auf UGREEN ohne Terminal
+UGREEN-kompatibler Entwickler-Build:
 
-1. Aktuelles ZIP auf dem Computer herunterladen und entpacken.
-2. UGREEN-Projekt stoppen.
-3. Alle Programmdateien im NAS-Projektordner ersetzen.
-4. Den Ordner `konfiguration` nicht löschen oder überschreiben.
-5. Projekt mit `docker-compose-ugreen.yml` neu bauen und starten.
-6. Browser vollständig neu laden: macOS `Cmd + Shift + R`, Windows/Linux `Strg + F5`.
+```bash
+docker compose -f deploy/ugreen/docker-compose.yml up -d --build
+```
+
+Normale Installationen sollen dagegen das veröffentlichte Docker-Hub-Image verwenden.
+
+## Veröffentlichungsablauf
+
+1. Änderungen werden in einem Pull Request geprüft.
+2. GitHub Actions führt Tests, Compose-Prüfungen und einen Docker-Build aus.
+3. Der Release-PR wird nach `main` gemergt.
+4. Ein Versions-Tag wie `v1.0.30` wird erstellt.
+5. `.github/workflows/docker-publish.yml` baut für `linux/amd64` und `linux/arm64`.
+6. Docker Hub erhält:
+
+```text
+schrittfisch2000/stalker-client:v1.0.30
+schrittfisch2000/stalker-client:latest
+```
+
+7. Installationen übernehmen das Update beim nächsten Pull oder Redeploy.
 
 ## HTTPS und Portalbilder
 
-Über eine HTTPS-Domain lädt der Browser unsichere HTTP-Portalbilder nicht direkt. Version 1.0.29 stellt deshalb Bildadressen als signierte Same-Origin-Anfragen bereit:
+Seit Version 1.0.29 stellt der Client Bildadressen als signierte Same-Origin-Anfragen bereit:
 
 ```text
 /api/image?ticket=...
@@ -139,7 +225,7 @@ stalker-client.log
 Standardport: `8080`.
 
 ```bash
-STALKER_PORT=8180 docker compose up -d --build
+STALKER_PORT=8180 docker compose up -d
 ```
 
 In UGOS die Projektvariable setzen:
@@ -174,6 +260,8 @@ Python-Unittests
 Validierung aller Compose-Dateien
 vollständiger Docker-Build
 ```
+
+Bei Versions-Tags veröffentlicht ein separater Workflow das Multi-Arch-Image auf Docker Hub.
 
 ## Lizenz und Nutzung
 
