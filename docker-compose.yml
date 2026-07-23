@@ -1,11 +1,11 @@
-name: stalker-client-deutsch
+name: stalker-client-ugreen
 
 services:
   stalker-client:
     image: schrittfisch2000/stalker-client:latest
     pull_policy: always
-    container_name: stalker-client-deutsch
-    hostname: stalker-client-deutsch
+    container_name: stalker-client
+    hostname: stalker-client
     restart: unless-stopped
 
     environment:
