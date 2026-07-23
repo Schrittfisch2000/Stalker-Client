@@ -2,16 +2,12 @@ name: stalker-client-deutsch
 
 services:
   stalker-client:
-    image: stalker-client-deutsch:1.0.29
-    build:
-      context: .
-      labels:
-        de.stalker-client.beschreibung: "Deutscher Web-Client für Stalker- und MAG-Portale"
-        de.stalker-client.version: "1.0.29"
-        de.stalker-client.plattform: "Docker Desktop und Docker Engine"
+    image: schrittfisch2000/stalker-client:latest
+    pull_policy: always
     container_name: stalker-client-deutsch
     hostname: stalker-client-deutsch
     restart: unless-stopped
+
     environment:
       TZ: ${TZ:-Europe/Berlin}
       LANG: C.UTF-8
@@ -20,13 +16,16 @@ services:
       CONFIG_FILE: /konfiguration/portal-einstellungen.json
       SECRET_FILE: /konfiguration/.stalker-geheimnis
       LOG_FILE: /konfiguration/stalker-client.log
+
     volumes:
       - ./konfiguration:/konfiguration
+
     ports:
       - "${STALKER_PORT:-8080}:8080"
+
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
