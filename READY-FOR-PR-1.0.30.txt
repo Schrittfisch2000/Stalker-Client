@@ -1,7 +1,0 @@
-Release 1.0.30 preparation complete.
-
-Next steps:
-- run CI
-- merge release PR
-- create tag v1.0.30
-- publish Docker Hub images
