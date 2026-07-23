@@ -230,6 +230,15 @@ def _duration_from_item(item: dict[str, Any]) -> float | None:
     return None
 
 
+def _play_response(playback_url: str, duration: float | None, seekable: bool) -> dict[str, str]:
+    return {
+        "url": playback_url,
+        "stream_type": "hls",
+        "duration": f"{duration:.3f}" if duration else "",
+        "seekable": "true" if seekable else "false",
+    }
+
+
 async def _probe_duration(url: str, portal: StalkerClient) -> float | None:
     headers = portal.portal_headers_for_stream()
     headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
@@ -310,7 +319,7 @@ async def _refresh_live_ticket(
     return {"url": f"/hls/{ticket}/index.m3u8", "ready": "true", "persistent_proxy": "true"}
 
 
-async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClient) -> dict[str, Any]:
+async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClient) -> dict[str, str]:
     media_type = str(payload.get("type", ""))
     command = str(payload.get("cmd", ""))
     series = payload.get("series")
@@ -333,12 +342,11 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
         media_type,
         "direct-hls" if main.is_hls(url) else ("ts-proxy-hls" if media_type == "itv" else "ffmpeg-hls"),
     )
-    return {
-        "url": playback_url,
-        "stream_type": "hls",
-        "duration": round(duration, 3) if duration else None,
-        "seekable": bool(duration and not main.is_hls(url)),
-    }
+    return _play_response(
+        playback_url,
+        round(duration, 3) if duration else None,
+        bool(duration and not main.is_hls(url)),
+    )
 
 
 async def _seek_vod(
