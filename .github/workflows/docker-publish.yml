@@ -3,6 +3,12 @@ name: Publish Docker image
 on:
   workflow_call:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - VERSION
+      - .github/workflows/docker-publish.yml
 
 permissions:
   contents: write
