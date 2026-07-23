@@ -7,8 +7,14 @@ from . import live_timeline_v2 as timeline
 from . import live_ts_proxy as legacy
 from . import main
 
-CATCH_UP_BUDGET_SECONDS = 1.25
-MAX_CATCH_UP_PACKETS = 40_000
+CATCH_UP_BUDGET_SECONDS = 3.0
+MAX_CATCH_UP_PACKETS = 120_000
+MAX_COMPARABLE_LAG_SECONDS = 120.0
+
+
+def _comparable_lag_seconds(target: int, anchor: int) -> float | None:
+    lag_seconds = ((target - anchor) % legacy.PTS_WRAP) / 90_000
+    return lag_seconds if lag_seconds <= MAX_COMPARABLE_LAG_SECONDS else None
 
 
 async def _catch_up_replacement_v3(
@@ -19,6 +25,13 @@ async def _catch_up_replacement_v3(
     target = normalizer.last_source_video_pts
     anchor = replacement.source_anchor
     if target is None or anchor is None or timeline._pts_at_or_after(anchor, target):
+        return replacement
+    original_lag = _comparable_lag_seconds(target, anchor)
+    if original_lag is None:
+        main.logger.info(
+            "TS-Proxy-Ersatzstrom verwendet eine andere PTS-Epoche; Zeitstempel werden direkt angeglichen: Session=%s",
+            session_id,
+        )
         return replacement
 
     candidate: list[bytes] = []
@@ -83,12 +96,22 @@ async def _catch_up_replacement_v3(
         newest_anchor = candidate_anchor
 
     if newest_complete is not None and newest_anchor is not None:
-        lag_seconds = ((target - newest_anchor) % legacy.PTS_WRAP) / 90_000
+        lag_seconds = _comparable_lag_seconds(target, newest_anchor)
+        if lag_seconds is None:
+            main.logger.info(
+                "TS-Proxy-neuester Keyframe verwendet eine andere PTS-Epoche: Session=%s",
+                session_id,
+            )
+            return timeline._replacement_from_packets(
+                replacement.connection,
+                newest_complete,
+                normalizer,
+            )
         main.logger.info(
             "TS-Proxy verwendet den neuesten verfügbaren Keyframe: Session=%s, Restabstand=%.2fs, Ursprungsabstand=%.2fs",
             session_id,
             lag_seconds,
-            ((target - anchor) % legacy.PTS_WRAP) / 90_000,
+            original_lag,
         )
         return timeline._replacement_from_packets(
             replacement.connection,

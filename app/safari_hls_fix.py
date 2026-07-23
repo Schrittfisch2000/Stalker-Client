@@ -80,8 +80,7 @@ def _ffmpeg_command(
     if live:
         command += [
             "-thread_queue_size", "8192",
-            "-fflags", "+genpts+discardcorrupt+igndts",
-            "-use_wallclock_as_timestamps", "1",
+            "-fflags", "+genpts+discardcorrupt",
             "-probesize", "2000000",
             "-analyzeduration", "2000000",
             "-f", "mpegts",
@@ -338,9 +337,11 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
     if media_type in {"vod", "series"}:
         duration = _duration_from_item(item) or await _probe_duration(url, portal)
     main.logger.info(
-        "Wiedergabe vorbereitet: Typ=%s, Format=%s",
+        "Wiedergabe vorbereitet: Typ=%s, Format=%s, Dauer=%s, Spulbar=%s",
         media_type,
         "direct-hls" if main.is_hls(url) else ("ts-proxy-hls" if media_type == "itv" else "ffmpeg-hls"),
+        f"{duration:.3f}s" if duration else "unbekannt",
+        bool(duration and not main.is_hls(url)),
     )
     return _play_response(
         playback_url,

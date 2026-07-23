@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from app.safari_hls_fix import _duration_from_item, _play_response
 
@@ -30,6 +31,14 @@ class VodDurationTests(unittest.TestCase):
 
         self.assertEqual(response["duration"], "")
         self.assertEqual(response["seekable"], "false")
+
+    def test_browser_removes_native_controls_for_seekable_vod(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app/static/vod-controls.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("video.toggleAttribute('controls', !customControls)", source)
+        self.assertIn("duration > 0 && seekable", source)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app import main
+from app import main, safari_hls_fix
 from app.live_runtime_fix import (
     _expected_ffmpeg_stops,
     _log_ffmpeg,
@@ -41,6 +41,17 @@ class FakeProcess:
 
 
 class LiveFfmpegCommandTests(unittest.TestCase):
+    def test_base_live_command_already_preserves_normalized_timestamps(self) -> None:
+        command = safari_hls_fix._ffmpeg_command(
+            "itv",
+            Path("/tmp/live-runtime-test"),
+            Path("/tmp/live-runtime-test/index.m3u8"),
+            0,
+        )
+
+        self.assertNotIn("-use_wallclock_as_timestamps", command)
+        self.assertNotIn("igndts", command[command.index("-fflags") + 1])
+
     def test_normalized_transport_timestamps_are_not_replaced_by_wallclock(self) -> None:
         command = _stable_live_ffmpeg_command(
             "itv",
