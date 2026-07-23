@@ -36,10 +36,10 @@ class DockerPublishWorkflowTests(unittest.TestCase):
         self.assertIn("github.event_name != 'pull_request'", self.ci)
         self.assertIn("github.ref == 'refs/heads/main'", self.ci)
 
-    def test_publish_uses_dockerhub_secrets(self) -> None:
+    def test_publish_uses_dockerhub_secrets_with_legacy_fallback(self) -> None:
         self.assertIn("docker/login-action@v3", self.ci)
-        self.assertIn("secrets.DOCKERHUB_USERNAME", self.ci)
-        self.assertIn("secrets.DOCKERHUB_TOKEN", self.ci)
+        self.assertIn("secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME", self.ci)
+        self.assertIn("secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD", self.ci)
         self.assertNotIn("Publishing wird übersprungen", self.ci)
         self.assertNotIn("DOCKERHUB_AVAILABLE=false", self.ci)
 
