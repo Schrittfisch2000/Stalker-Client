@@ -1,6 +1,6 @@
 # Stalker Client Docker
 
-**Aktuelle Version: 1.0.30**
+**Aktuelle Version: 1.0.31**
 
 Stalker Client läuft als Docker-WebApp für kompatible Stalker-/MAG-Portale. Das Repository ist auf den Docker-Betrieb ausgerichtet; normale Installationen verwenden das fertige Docker-Hub-Image und bauen nicht lokal.
 
@@ -154,6 +154,51 @@ http://192.168.178.4:8080
 ```
 
 Beim ersten Start richtest du Portal, MAC-Adresse und Benutzer direkt in der Weboberfläche ein.
+
+## UGREEN-Installation direkt aus dem Docker-Hub-Repository
+
+Wenn du in der UGREEN-Docker-App nicht über **Compose/Projekt**, sondern über **Image** oder **Repository** installierst, verwende diese Werte.
+
+Image:
+
+```text
+schrittfisch2000/stalker-client:latest
+```
+
+Containername:
+
+```text
+stalker-client
+```
+
+Port:
+
+```text
+Host-Port: 8080
+Container-Port: 8080
+Protokoll: TCP
+```
+
+Volume:
+
+```text
+NAS-Ordner: /volume1/docker/stalker-client/konfiguration
+Container-Pfad: /konfiguration
+```
+
+Umgebungsvariablen:
+
+```text
+TZ=Europe/Berlin
+MAIN_DIRECTORY=/konfiguration
+CONFIG_FILE=/konfiguration/portal-einstellungen.json
+SECRET_FILE=/konfiguration/.stalker-geheimnis
+LOG_FILE=/konfiguration/stalker-client.log
+```
+
+Der Ordner `/volume1/docker/stalker-client/konfiguration` muss vorher im UGOS-Dateimanager angelegt werden. Er enthält später deine Einstellungen und darf bei Updates nicht gelöscht werden.
+
+Ab Version `1.0.31` funktioniert das Image auch dann sauber, wenn UGOS nicht alle Umgebungsvariablen setzt. Für dauerhafte Daten solltest du trotzdem immer das Volume nach `/konfiguration` eintragen.
 
 ## Installation auf Linux
 
@@ -334,7 +379,7 @@ Nützliche Prüfungen:
 
 - Containerstatus ist `running` oder `healthy`.
 - Die Weboberfläche antwortet unter Port 8080 oder deinem geänderten Port.
-- In der Oberfläche wird Version `1.0.30` angezeigt.
+- In der Oberfläche wird Version `1.0.31` angezeigt.
 - Bilder und Poster werden über `/api/image?...` geladen, wenn die Seite über HTTPS läuft.
 
 Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
@@ -352,6 +397,28 @@ image: schrittfisch2000/stalker-client:latest
 ```
 
 In der Compose-Datei darf kein `build:`-Block stehen.
+
+### Permission denied: `/config`
+
+Dann wurde ein altes Image oder eine alte Konfiguration gestartet, die noch auf `/config` statt `/konfiguration` zeigt.
+
+Lösung:
+
+1. In UGOS das Image `schrittfisch2000/stalker-client:latest` neu laden.
+2. Den Container neu erstellen, nicht nur neu starten.
+3. Als Volume eintragen:
+
+   ```text
+   /volume1/docker/stalker-client/konfiguration -> /konfiguration
+   ```
+
+4. Falls Umgebungsvariablen sichtbar sind, `LOG_FILE` auf diesen Wert setzen:
+
+   ```text
+   /konfiguration/stalker-client.log
+   ```
+
+Ab Version `1.0.31` sind die internen Standardwerte korrigiert.
 
 ### Einstellungen sind nach Update weg
 
@@ -391,8 +458,8 @@ Nach erfolgreichen Prüfungen auf `main` veröffentlicht GitHub Actions automati
 
 ```text
 schrittfisch2000/stalker-client:latest
-schrittfisch2000/stalker-client:1.0.30
-schrittfisch2000/stalker-client:v1.0.30
+schrittfisch2000/stalker-client:1.0.31
+schrittfisch2000/stalker-client:v1.0.31
 ```
 
 ## Lizenz und Nutzung

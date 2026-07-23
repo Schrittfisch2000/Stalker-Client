@@ -5,7 +5,7 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-LOG_FILE = Path(os.getenv("LOG_FILE", "/config/stalker-client.log"))
+LOG_FILE = Path(os.getenv("LOG_FILE", "/konfiguration/stalker-client.log"))
 
 
 def configure_logging() -> logging.Logger:
