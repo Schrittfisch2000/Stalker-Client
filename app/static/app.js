@@ -199,7 +199,7 @@ async function playItem(item, series = null) {
     $('playerTitle').textContent = titleOf(item);
     $('playerMeta').textContent = item.description || item.plot || 'Stream wird geladen …';
     $('playerDialog').showModal();
-    attachPlayer(result.url, mediaType === 'itv');
+    attachPlayer(result.url, mediaType === 'itv', result);
     showMessage('');
     if (mediaType === 'itv') loadEpg(item);
     else renderMediaInfo(item, mediaType);
@@ -314,11 +314,12 @@ function destroyPlayer() {
   $('epg').textContent = '';
 }
 
-function attachPlayer(url, isLive = false) {
+function attachPlayer(url, isLive = false, playback = {}) {
   const video = $('player');
   destroyPlayer();
   const generation = state.playerGeneration;
   const absoluteUrl = new URL(url, window.location.href).href;
+  configureVodControls(absoluteUrl, isLive, playback);
   video.onerror = () => {
     const error = video.error;
     $('playerMeta').textContent = error ? `Playerfehler ${error.code}: ${error.message || 'Wiedergabe nicht möglich'}` : 'Playerfehler: Wiedergabe nicht möglich';

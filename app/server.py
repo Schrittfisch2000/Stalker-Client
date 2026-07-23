@@ -48,6 +48,7 @@ PORTAL_REQUIRED_PATHS = (
     "/api/image",
     "/api/live-refresh/",
     "/api/live-release/",
+    "/api/vod-seek/",
     "/download/",
     "/stream/",
     "/hls/",

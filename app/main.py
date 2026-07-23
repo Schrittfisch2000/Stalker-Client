@@ -35,6 +35,25 @@ _hls_lock = asyncio.Lock()
 _cleanup_task: asyncio.Task | None = None
 
 
+def safe_log_path(path: str) -> str:
+    ticket_routes = (
+        "/api/session-release/",
+        "/api/live-refresh/",
+        "/api/live-release/",
+        "/api/vod-seek/",
+        "/hls/",
+        "/stream/",
+        "/download/",
+    )
+    for prefix in ticket_routes:
+        if path.startswith(prefix):
+            suffix = ""
+            if prefix == "/hls/":
+                suffix = "/index.m3u8" if path.endswith("/index.m3u8") else "/segment.ts"
+            return f"{prefix}<ticket>{suffix}"
+    return path
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     global _cleanup_task
@@ -56,14 +75,15 @@ async def shutdown_event() -> None:
 @app.middleware("http")
 async def request_logging(request: Request, call_next):
     started = time.perf_counter()
+    log_path = safe_log_path(request.url.path)
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception("Unbehandelter Fehler bei %s %s", request.method, request.url.path)
+        logger.exception("Unbehandelter Fehler bei %s %s", request.method, log_path)
         raise
     elapsed_ms = (time.perf_counter() - started) * 1000
     if request.url.path.startswith("/api/") and request.url.path != "/api/config":
-        logger.info("%s %s -> %s (%.0f ms)", request.method, request.url.path, response.status_code, elapsed_ms)
+        logger.info("%s %s -> %s (%.0f ms)", request.method, log_path, response.status_code, elapsed_ms)
     return response
 
 

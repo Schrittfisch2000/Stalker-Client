@@ -311,6 +311,7 @@ async def _release_session(
 ) -> dict[str, bool]:
     safari_hls_fix._read_ticket(ticket, settings)
     session_id = main.session_id_for(ticket)
+    safari_hls_fix._vod_seek_offsets.pop(session_id, None)
     session = main._hls_sessions.get(session_id)
     if session is None:
         return {"released": False}

@@ -100,7 +100,12 @@
     try {
       const result = await api('/api/progress', {
         method: 'PUT',
-        body: JSON.stringify({ ...item, position: video.currentTime, duration: Number.isFinite(video.duration) ? video.duration : 0, finished: video.ended }),
+        body: JSON.stringify({
+          ...item,
+          position: window.playerAbsolutePosition ? window.playerAbsolutePosition() : video.currentTime,
+          duration: window.playerKnownDuration ? window.playerKnownDuration() : (Number.isFinite(video.duration) ? video.duration : 0),
+          finished: video.ended,
+        }),
       });
       mediaState.progress = [result.item, ...mediaState.progress.filter((entry) => !(entry.type === result.item.type && String(entry.id) === String(result.item.id)))];
     } catch (_) {}
@@ -115,7 +120,11 @@
       const item = mediaState.current;
       if (!item) return;
       const saved = progressMap().get(favoriteKey(item.type, item.id));
-      if (saved && !saved.finished && saved.position > 5 && saved.position < video.duration - 10) video.currentTime = saved.position;
+      const knownDuration = window.playerKnownDuration ? window.playerKnownDuration() : video.duration;
+      if (saved && !saved.finished && saved.position > 5 && saved.position < knownDuration - 10) {
+        if (window.seekVodTo && window.playerKnownDuration?.()) window.seekVodTo(saved.position);
+        else video.currentTime = saved.position;
+      }
     });
     $('playerDialog').addEventListener('close', () => { saveCurrentProgress(true); mediaState.current = null; });
   }

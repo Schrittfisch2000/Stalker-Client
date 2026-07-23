@@ -31,6 +31,9 @@ def _stable_live_ffmpeg_command(
         flags = [flag for flag in command[index].split("+") if flag and flag != "igndts"]
         command[index] = "+" + "+".join(flags)
 
+    audio_codec = command.index("-c:a")
+    command[audio_codec:audio_codec] = ["-af", "aresample=async=1000:first_pts=0"]
+
     return command
 
 

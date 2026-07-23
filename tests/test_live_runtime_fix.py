@@ -54,6 +54,7 @@ class LiveFfmpegCommandTests(unittest.TestCase):
         self.assertIn("genpts", flags)
         self.assertIn("discardcorrupt", flags)
         self.assertNotIn("igndts", flags)
+        self.assertIn("aresample=async=1000:first_pts=0", command)
 
 
 class HlsLifecycleTests(unittest.IsolatedAsyncioTestCase):
