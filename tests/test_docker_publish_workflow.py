@@ -37,6 +37,12 @@ class DockerPublishWorkflowTests(unittest.TestCase):
         self.assertIn("github.ref == 'refs/heads/main'", self.ci)
         self.assertIn("Docker-Hub-Zugang prüfen", self.ci)
 
+    def test_missing_dockerhub_secrets_skip_publish_without_failing_ci(self) -> None:
+        self.assertIn("DOCKERHUB_AVAILABLE=false", self.ci)
+        self.assertIn("Publishing wird übersprungen", self.ci)
+        self.assertIn('${DOCKERHUB_AVAILABLE:-false}', self.ci)
+        self.assertIn('echo "publish=false" >> "$GITHUB_OUTPUT"', self.ci)
+
     def test_architectures_build_on_native_runners(self) -> None:
         self.assertIn("runner: ubuntu-24.04", self.ci)
         self.assertIn("runner: ubuntu-24.04-arm", self.ci)
