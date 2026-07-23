@@ -4,6 +4,14 @@
 
 Dieses Repository stellt den Stalker Client ausschließlich als Docker-Compose-Projekt für UGREEN-NAS mit UGOS Pro bereit.
 
+Das offizielle Docker-Image ist:
+
+```text
+schrittfisch2000/stalker-client:latest
+```
+
+Die NAS baut die Anwendung nicht lokal. UGOS lädt das fertige Image direkt von Docker Hub und wählt automatisch die passende Architektur für `linux/amd64` oder `linux/arm64`.
+
 > Nutze den Client ausschließlich mit Portalen und Inhalten, für die du eine gültige Berechtigung besitzt.
 
 ## Funktionen
@@ -12,110 +20,228 @@ Dieses Repository stellt den Stalker Client ausschließlich als Docker-Compose-P
 - mehrere Portale und Benutzerkonten
 - Favoriten und Wiedergabefortschritt
 - Downloads, sofern sie vom Anbieter erlaubt sind
+- HTTPS-tauglicher Bildproxy für Poster und Logos
 - dauerhafte Konfiguration außerhalb des Containers
 - automatischer Neustart und Healthcheck
-- Docker-Image für UGREEN-Systeme mit `amd64` oder `arm64`
-
-Docker wählt auf der UGREEN NAS automatisch die passende Architektur aus.
+- Updates über Docker Hub ohne erneutes Kopieren des Quellcodes
 
 ## Benötigte Dateien
 
-Für die Installation auf der NAS wird nur diese Datei benötigt:
+Für die Installation auf der UGREEN NAS wird nur eine Datei benötigt:
 
 ```text
 docker-compose.yml
 ```
 
-Der Container wird direkt von Docker Hub geladen:
+Der Ordner `konfiguration` wird auf der NAS angelegt und enthält später alle Einstellungen, Benutzer, Portalzugänge, Favoriten, Fortschritte und Logs.
 
-```text
-schrittfisch2000/stalker-client:latest
-```
+## Installation über die UGOS-Weboberfläche
 
-Die Anwendung wird auf der NAS nicht lokal aus dem Quellcode gebaut.
+Diese Variante ist der empfohlene Weg. Sie benötigt kein `git`, `curl`, `wget` und kein Terminal auf der NAS.
 
-## Installation über UGOS Pro
+### 1. Projektordner anlegen
 
-1. Auf der UGREEN NAS einen Projektordner anlegen, zum Beispiel:
+1. In UGOS Pro den **Dateimanager** öffnen.
+2. In den Docker-Bereich wechseln, zum Beispiel:
 
    ```text
-   /volume1/docker/stalker-client
+   /volume1/docker
    ```
 
-2. Darin den Ordner für die dauerhafte Konfiguration anlegen:
+3. Einen neuen Ordner erstellen:
+
+   ```text
+   stalker-client
+   ```
+
+4. In diesem Ordner einen weiteren Ordner erstellen:
 
    ```text
    konfiguration
    ```
 
-3. Die Datei `docker-compose.yml` aus diesem Repository in den Projektordner kopieren.
-4. In UGOS Pro **Docker → Projekte/Compose** öffnen.
-5. Den Projektordner auswählen und das Compose-Projekt erstellen.
-6. Das Projekt starten.
-7. Im Browser öffnen:
+Die Struktur soll danach so aussehen:
+
+```text
+stalker-client/
+└── konfiguration/
+```
+
+### 2. Compose-Datei einfügen
+
+Im Ordner `stalker-client` eine neue Datei anlegen:
+
+```text
+docker-compose.yml
+```
+
+Inhalt:
+
+```yaml
+name: stalker-client-ugreen
+
+services:
+  stalker-client:
+    image: schrittfisch2000/stalker-client:latest
+    pull_policy: always
+    container_name: stalker-client
+    hostname: stalker-client
+    restart: unless-stopped
+
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
+      MAIN_DIRECTORY: /konfiguration
+      CONFIG_FILE: /konfiguration/portal-einstellungen.json
+      SECRET_FILE: /konfiguration/.stalker-geheimnis
+      LOG_FILE: /konfiguration/stalker-client.log
+
+    volumes:
+      - ./konfiguration:/konfiguration
+
+    ports:
+      - "${STALKER_PORT:-8080}:8080"
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+```
+
+### 3. Docker-Projekt in UGOS erstellen
+
+1. In UGOS Pro die App **Docker** öffnen.
+2. Zu **Projekte**, **Compose** oder **Compose-Projekte** wechseln.
+3. Ein neues Projekt erstellen.
+4. Als Projektordner auswählen:
 
    ```text
-   http://IP-DER-UGREEN-NAS:8080
+   /volume1/docker/stalker-client
    ```
 
-## Updates
+5. Als Compose-Datei auswählen:
 
-Die Compose-Datei verwendet `pull_policy: always`. Beim erneuten Bereitstellen des Projekts lädt UGOS deshalb das aktuelle Image von Docker Hub.
+   ```text
+   docker-compose.yml
+   ```
 
-Vorgehen in UGOS Pro:
+6. Projekt erstellen und starten.
 
-1. Projekt stoppen.
-2. Projekt aktualisieren oder neu bereitstellen.
-3. Darauf achten, dass der Ordner `konfiguration` erhalten bleibt.
-4. Projekt wieder starten.
+UGOS lädt jetzt das Image `schrittfisch2000/stalker-client:latest` von Docker Hub.
 
-Optional über das Terminal:
+### 4. Weboberfläche öffnen
 
-```bash
-docker compose pull
-docker compose up -d
+Im Browser öffnen:
+
+```text
+http://IP-DER-UGREEN-NAS:8080
 ```
+
+Beispiel:
+
+```text
+http://192.168.178.4:8080
+```
+
+Beim ersten Start richtest du Portal, MAC-Adresse und Benutzer direkt in der Weboberfläche ein.
+
+## Update über die UGOS-Weboberfläche
+
+Die Compose-Datei verwendet:
+
+```yaml
+pull_policy: always
+```
+
+Dadurch prüft UGOS beim erneuten Bereitstellen, ob auf Docker Hub ein neueres Image verfügbar ist.
+
+Vorgehen:
+
+1. In UGOS Pro **Docker** öffnen.
+2. Das Projekt `stalker-client` stoppen.
+3. Projekt aktualisieren, erneut bereitstellen oder neu erstellen.
+4. Darauf achten, dass keine Option wie **Daten löschen**, **Volumes löschen** oder **Projektordner löschen** aktiviert ist.
+5. Projekt wieder starten.
+6. Browser vollständig neu laden.
+
+Der Ordner `konfiguration` bleibt erhalten und wird nicht vom Docker-Image überschrieben.
 
 ## Port ändern
 
-Standardmäßig ist die Anwendung über Port `8080` erreichbar.
+Standardmäßig läuft der Client auf Port `8080`.
 
-In den Umgebungsvariablen des UGOS-Projekts kann ein anderer Port gesetzt werden:
+Wenn Port 8080 belegt ist, in UGOS beim Compose-Projekt die Umgebungsvariable setzen:
 
 ```text
 STALKER_PORT=8180
 ```
 
-Danach lautet die Adresse beispielsweise:
+Danach lautet die Adresse:
 
 ```text
 http://IP-DER-UGREEN-NAS:8180
 ```
 
-## Konfiguration und Sicherung
+## Konfiguration sichern
 
-Alle Laufzeitdaten liegen im Ordner:
+Alle Laufzeitdaten liegen im Projektordner unter:
 
 ```text
-./konfiguration
+konfiguration
 ```
 
-Diesen Ordner vor Updates oder Änderungen sichern. Er kann unter anderem Portaladressen, MAC-Adressen, Benutzerkonten, Tokens, Signaturschlüssel und Logs enthalten.
+Diesen Ordner regelmäßig sichern. Er kann Portaladressen, MAC-Adressen, Benutzerkonten, Tokens, Tickets, Signaturschlüssel und Logs enthalten.
 
-Der Ordner darf niemals in Git eingecheckt, veröffentlicht oder ungeschwärzt weitergegeben werden.
+Den Ordner `konfiguration` niemals veröffentlichen oder ungeschwärzt in GitHub, Issues, Pull Requests oder Chats hochladen.
 
 ## Diagnose
 
-Die Container-Protokolle können direkt in UGOS Pro unter dem Docker-Projekt geöffnet werden.
+In UGOS Pro:
 
-Optional über das Terminal:
+1. **Docker** öffnen.
+2. Projekt `stalker-client` auswählen.
+3. Container `stalker-client` öffnen.
+4. Protokolle anzeigen.
 
-```bash
-docker compose ps
-docker compose logs -f --tail=300
-```
+Nützliche Prüfungen:
+
+- Containerstatus ist `running` oder `healthy`.
+- Die Weboberfläche antwortet unter Port 8080 oder deinem geänderten Port.
+- In der Oberfläche wird Version `1.0.30` angezeigt.
+- Bilder und Poster werden über `/api/image?...` geladen, wenn die Seite über HTTPS läuft.
 
 Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
+
+## Häufige Fehler
+
+### Docker sucht ein Dockerfile
+
+Wenn UGOS meldet, dass ein `Dockerfile` fehlt, wurde eine alte lokale Build-Compose-Datei verwendet.
+
+Richtig ist nur diese Zeile:
+
+```yaml
+image: schrittfisch2000/stalker-client:latest
+```
+
+In der Compose-Datei darf kein `build:`-Block stehen.
+
+### Einstellungen sind nach Update weg
+
+Dann wurde wahrscheinlich der Ordner `konfiguration` gelöscht oder ein neues Projekt in einem anderen Ordner erstellt.
+
+Der Projektordner muss weiterhin denselben Unterordner enthalten:
+
+```text
+konfiguration
+```
+
+### Port 8080 ist belegt
+
+Setze `STALKER_PORT=8180` oder einen anderen freien Port in den Projektvariablen und stelle das Projekt neu bereit.
 
 ## Automatischer Docker-Build
 
@@ -127,7 +253,7 @@ GitHub Actions prüft bei Änderungen:
 - einen vollständigen Docker-Build
 - versehentlich eingecheckte Konfigurations- oder Geheimnisdateien
 
-Nach erfolgreichen Prüfungen auf `main` wird das UGREEN-kompatible Multi-Arch-Image für `linux/amd64` und `linux/arm64` auf Docker Hub veröffentlicht.
+Nach erfolgreichen Prüfungen auf `main` kann das Multi-Arch-Image für `linux/amd64` und `linux/arm64` auf Docker Hub veröffentlicht werden.
 
 ## Lizenz und Nutzung
 
