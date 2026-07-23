@@ -73,25 +73,37 @@ jobs:
       - name: Docker-Image bauen
         run: docker build --tag stalker-client-ugreen-ci:${{ github.sha }} .
 
-  publish:
-    name: UGREEN Multi-Arch-Image veröffentlichen
+  release-plan:
+    name: Docker-Release vorbereiten
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
-      contents: write
-    concurrency:
-      group: ugreen-release-${{ github.repository }}
-      cancel-in-progress: false
-    env:
-      IMAGE_NAME: schrittfisch2000/stalker-client
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
+      release_exists: ${{ steps.version.outputs.release_exists }}
 
     steps:
-      - name: Repository auschecken
+      - name: Repository vollständig auschecken
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Docker-Hub-Zugang prüfen
+        shell: bash
+        env:
+          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
+            echo "::error::Docker-Hub-Zugangsdaten fehlen oder sind für GitHub Actions nicht verfügbar."
+            exit 1
+          fi
 
       - name: Release-Version und Status ermitteln
         id: version
@@ -112,9 +124,9 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
           else
-            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -123,59 +135,122 @@ jobs:
             echo "release_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Docker-Hub-Zugang prüfen
-        if: steps.version.outputs.tag_exists == 'false'
-        shell: bash
-        env:
-          HUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$HUB_USERNAME" || -z "$HUB_TOKEN" ]]; then
-            echo "::error::Docker-Hub-Zugangsdaten fehlen oder sind für GitHub Actions nicht verfügbar."
-            exit 1
-          fi
+  build-architecture:
+    name: Docker-Image ${{ matrix.arch }} nativ bauen
+    needs: release-plan
+    if: needs.release-plan.outputs.publish == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE_NAME: schrittfisch2000/stalker-client
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
 
       - name: Bei Docker Hub anmelden
-        if: steps.version.outputs.tag_exists == 'false'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: QEMU für UGREEN-Architekturen einrichten
-        if: steps.version.outputs.tag_exists == 'false'
-        uses: docker/setup-qemu-action@v3
-
       - name: Docker Buildx einrichten
-        if: steps.version.outputs.tag_exists == 'false'
         uses: docker/setup-buildx-action@v3
 
-      - name: UGREEN NAS Multi-Arch-Image bauen und veröffentlichen
-        if: steps.version.outputs.tag_exists == 'false'
+      - name: Native Architektur bauen und veröffentlichen
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
-            ${{ env.IMAGE_NAME }}:latest
+          tags: ${{ env.IMAGE_NAME }}:${{ needs.release-plan.outputs.tag }}-${{ matrix.arch }}
           labels: |
             org.opencontainers.image.title=Stalker Client für UGREEN NAS
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.version=${{ needs.release-plan.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=stalker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=stalker-${{ matrix.arch }}
+          provenance: false
+          sbom: false
+
+  publish-manifest:
+    name: Multi-Arch-Manifest und Release veröffentlichen
+    needs:
+      - release-plan
+      - build-architecture
+    if: needs.release-plan.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      IMAGE_NAME: schrittfisch2000/stalker-client
+      VERSION: ${{ needs.release-plan.outputs.version }}
+      TAG: ${{ needs.release-plan.outputs.tag }}
+
+    steps:
+      - name: Repository vollständig auschecken
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bei Docker Hub anmelden
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Buildx einrichten
+        uses: docker/setup-buildx-action@v3
+
+      - name: Gemeinsames amd64- und arm64-Manifest erstellen
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            --tag "$IMAGE_NAME:$VERSION" \
+            --tag "$IMAGE_NAME:$TAG" \
+            --tag "$IMAGE_NAME:latest" \
+            "$IMAGE_NAME:$TAG-amd64" \
+            "$IMAGE_NAME:$TAG-arm64"
+
+      - name: Manifest-Architekturen prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE_NAME:$TAG" --raw > manifest.json
+          python - <<'PY'
+          import json
+
+          with open("manifest.json", encoding="utf-8") as handle:
+              manifest = json.load(handle)
+
+          architectures = {
+              platform.get("architecture")
+              for item in manifest.get("manifests", [])
+              if (platform := item.get("platform", {})).get("os") == "linux"
+          }
+          missing = {"amd64", "arm64"} - architectures
+          if missing:
+              raise SystemExit(f"Fehlende Architekturen im Manifest: {sorted(missing)}")
+          print("Veröffentlichte Architekturen:", ", ".join(sorted(architectures)))
+          PY
 
       - name: Git-Tag erstellen
-        if: steps.version.outputs.tag_exists == 'false'
         shell: bash
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -184,19 +259,21 @@ jobs:
           git push origin "$TAG"
 
       - name: GitHub Release erstellen
-        if: steps.version.outputs.release_exists == 'false'
+        if: needs.release-plan.outputs.release_exists == 'false'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" \
-            --verify-tag \
-            --title "Stalker Client für UGREEN NAS ${VERSION}" \
-            --generate-notes
-
-      - name: Bereits veröffentlichte Version melden
-        if: steps.version.outputs.tag_exists == 'true' && steps.version.outputs.release_exists == 'true'
-        run: echo "${{ steps.version.outputs.tag }} ist bereits vollständig veröffentlicht."
+          RELEASE_NOTES="RELEASE-${VERSION}.md"
+          if [[ -f "$RELEASE_NOTES" ]]; then
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "Stalker Client für UGREEN NAS ${VERSION}" \
+              --notes-file "$RELEASE_NOTES"
+          else
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "Stalker Client für UGREEN NAS ${VERSION}" \
+              --generate-notes
+          fi
