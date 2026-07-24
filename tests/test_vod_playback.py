@@ -68,6 +68,22 @@ class VodDurationTests(unittest.TestCase):
         self.assertIn("playback.fallback_url", source)
         self.assertIn("originalAttachPlayer(url, isLive, playback)", sessions)
 
+    def test_apple_devices_use_native_hls_instead_of_mpegts(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "app/static/app.js").read_text(encoding="utf-8")
+        controls = (root / "app/static/vod-controls.js").read_text(encoding="utf-8")
+        recovery = (root / "app/static/safari-hls-recovery.js").read_text(encoding="utf-8")
+        template = (root / "app/templates/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("/iPad|iPhone|iPod/", source)
+        self.assertIn("navigator.maxTouchPoints > 1", source)
+        self.assertIn("prefersNativeHlsPlayback()", source)
+        self.assertIn("useAppleHlsFallback", source)
+        self.assertIn("selectedUrl = useAppleHlsFallback ? playback.fallback_url : url", source)
+        self.assertIn("window.prefersNativeHlsPlayback?.()", controls)
+        self.assertIn("window.prefersNativeHlsPlayback?.()", recovery)
+        self.assertIn('webkit-playsinline preload="auto"', template)
+
     def test_vod_mpegts_uses_browser_timeline_for_seeking(self) -> None:
         source = (
             Path(__file__).resolve().parents[1] / "app/static/vod-controls.js"

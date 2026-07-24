@@ -237,6 +237,50 @@ function hlsOptions() {
   };
 }
 
+function isApplePlaybackDevice() {
+  const userAgent = navigator.userAgent || '';
+  const platform = navigator.platform || '';
+  return /iPad|iPhone|iPod/.test(userAgent)
+    || (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function isSafariBrowser() {
+  const userAgent = navigator.userAgent || '';
+  return /Safari\//.test(userAgent)
+    && !/Chrome|Chromium|CriOS|Edg|OPR|Android/.test(userAgent);
+}
+
+function prefersNativeHlsPlayback() {
+  const video = $('player');
+  return Boolean(
+    video
+    && video.canPlayType('application/vnd.apple.mpegurl')
+    && (isApplePlaybackDevice() || isSafariBrowser())
+  );
+}
+
+window.prefersNativeHlsPlayback = prefersNativeHlsPlayback;
+
+function startHlsPlayback(source, generation, isLive) {
+  const video = $('player');
+  if (prefersNativeHlsPlayback()) {
+    video.src = source;
+    video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+    return;
+  }
+  if (window.Hls && Hls.isSupported()) {
+    state.hls = new Hls(hlsOptions());
+    configureHlsInstance(state.hls, source, generation, isLive);
+    return;
+  }
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = source;
+    video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+    return;
+  }
+  $('playerMeta').textContent = 'HLS-Wiedergabe wird von diesem Browser nicht unterstützt.';
+}
+
 function scheduleLiveRefresh(source, generation) {
   if (!ticketFromSource(source) || generation !== state.playerGeneration) return;
   if (state.liveRefreshTimer) clearTimeout(state.liveRefreshTimer);
@@ -355,13 +399,11 @@ function startMpegTsPlayer(source, generation, playback = {}) {
         ...playback,
         stream_type: 'hls'
       });
-      if (window.Hls && Hls.isSupported()) {
-        state.hls = new Hls(hlsOptions());
-        configureHlsInstance(state.hls, fallbackSource, generation, playback.is_live === true || playback.is_live === 'true');
-      } else {
-        video.src = fallbackSource;
-        video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
-      }
+      startHlsPlayback(
+        fallbackSource,
+        generation,
+        playback.is_live === true || playback.is_live === 'true'
+      );
     }, 0);
   });
   engine.load();
@@ -375,25 +417,26 @@ function attachPlayer(url, isLive = false, playback = {}) {
   const video = $('player');
   destroyPlayer();
   const generation = state.playerGeneration;
-  const absoluteUrl = new URL(url, window.location.href).href;
-  configureVodControls(absoluteUrl, isLive, playback);
+  const useAppleHlsFallback = playback.stream_type === 'mpegts'
+    && prefersNativeHlsPlayback()
+    && playback.fallback_url;
+  const selectedUrl = useAppleHlsFallback ? playback.fallback_url : url;
+  const selectedPlayback = useAppleHlsFallback
+    ? { ...playback, stream_type: 'hls' }
+    : playback;
+  const absoluteUrl = new URL(selectedUrl, window.location.href).href;
+  configureVodControls(absoluteUrl, isLive, selectedPlayback);
   video.onerror = () => {
     const error = video.error;
     $('playerMeta').textContent = error ? `Playerfehler ${error.code}: ${error.message || 'Wiedergabe nicht möglich'}` : 'Playerfehler: Wiedergabe nicht möglich';
   };
   video.onplaying = () => { if ($('playerMeta').textContent === 'Stream wird geladen …') $('playerMeta').textContent = ''; };
 
-  playback.is_live = isLive ? 'true' : 'false';
-  if (playback.stream_type === 'mpegts' && window.mpegts && mpegts.isSupported()) {
-    startMpegTsPlayer(absoluteUrl, generation, playback);
-  } else if (window.Hls && Hls.isSupported()) {
-    state.hls = new Hls(hlsOptions());
-    configureHlsInstance(state.hls, absoluteUrl, generation, isLive);
-  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = absoluteUrl;
-    video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+  selectedPlayback.is_live = isLive ? 'true' : 'false';
+  if (selectedPlayback.stream_type === 'mpegts' && window.mpegts && mpegts.isSupported()) {
+    startMpegTsPlayer(absoluteUrl, generation, selectedPlayback);
   } else {
-    $('playerMeta').textContent = 'HLS-Wiedergabe wird von diesem Browser nicht unterstützt.';
+    startHlsPlayback(absoluteUrl, generation, isLive);
   }
 }
 
