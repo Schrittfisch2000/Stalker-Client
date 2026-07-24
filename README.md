@@ -1,6 +1,6 @@
 # Stalker Client Docker
 
-**Aktuelle Version: 1.0.35**
+**Aktuelle Version: 1.0.36**
 
 Stalker Client läuft als Docker-WebApp für kompatible Stalker-/MAG-Portale. Das Repository ist auf den Docker-Betrieb ausgerichtet; normale Installationen verwenden das fertige Docker-Hub-Image und bauen nicht lokal.
 
@@ -381,7 +381,7 @@ Nützliche Prüfungen:
 
 - Containerstatus ist `running` oder `healthy`.
 - Die Weboberfläche antwortet unter Port 8080 oder deinem geänderten Port.
-- In der Oberfläche wird Version `1.0.35` angezeigt.
+- In der Oberfläche wird Version `1.0.36` angezeigt.
 - Bilder und Poster werden über `/api/image?...` geladen, wenn die Seite über HTTPS läuft.
 
 Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
@@ -460,8 +460,8 @@ Nach erfolgreichen Prüfungen auf `main` veröffentlicht GitHub Actions automati
 
 ```text
 schrittfisch2000/stalker-client:latest
-schrittfisch2000/stalker-client:1.0.35
-schrittfisch2000/stalker-client:v1.0.35
+schrittfisch2000/stalker-client:1.0.36
+schrittfisch2000/stalker-client:v1.0.36
 ```
 
 ## Lizenz und Nutzung

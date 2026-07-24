@@ -33,10 +33,17 @@ class VodDurationTests(unittest.TestCase):
         self.assertEqual(response["seekable"], "false")
 
     def test_play_response_can_select_browser_mpegts_for_live_tv(self) -> None:
-        response = _play_response("/stream/ticket", None, False, "mpegts")
+        response = _play_response(
+            "/stream/ticket",
+            None,
+            False,
+            "mpegts",
+            "/hls/ticket/index.m3u8",
+        )
 
         self.assertEqual(response["url"], "/stream/ticket")
         self.assertEqual(response["stream_type"], "mpegts")
+        self.assertEqual(response["fallback_url"], "/hls/ticket/index.m3u8")
 
     def test_browser_removes_native_controls_for_seekable_vod(self) -> None:
         source = (
@@ -55,9 +62,20 @@ class VodDurationTests(unittest.TestCase):
         self.assertIn("mpegts.js@1.8.0", template)
         self.assertIn("playback.stream_type === 'mpegts'", source)
         self.assertIn("mpegts.createPlayer", source)
+        self.assertNotIn("liveBufferLatencyChasing", source)
         self.assertIn("state.mpegts.unload()", source)
         self.assertIn("state.mpegts.destroy()", source)
+        self.assertIn("playback.fallback_url", source)
         self.assertIn("originalAttachPlayer(url, isLive, playback)", sessions)
+
+    def test_vod_mpegts_uses_browser_timeline_for_seeking(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app/static/vod-controls.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("directSeek = playback.stream_type === 'mpegts'", source)
+        self.assertIn("video.currentTime = position", source)
+        self.assertIn("path.match(/^\\/stream\\/", source)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
   let duration = 0;
   let baseOffset = 0;
   let seeking = false;
+  let directSeek = false;
 
   function formatTime(value) {
     const seconds = Math.max(0, Math.floor(Number(value) || 0));
@@ -34,6 +35,11 @@
   async function seekTo(position) {
     if (!ticket || !duration) return;
     const video = $('player');
+    if (directSeek) {
+      video.currentTime = position;
+      updateControls();
+      return;
+    }
     const wasPaused = video.paused;
     $('playerMeta').textContent = `Springe zu ${formatTime(position)} …`;
     const result = await api(`/api/vod-seek/${encodeURIComponent(ticket)}`, {
@@ -61,11 +67,13 @@
 
   window.configureVodControls = function configureVodControls(source, isLive, playback = {}) {
     const video = $('player');
-    const match = new URL(source).pathname.match(/^\/hls\/([^/]+)\/index\.m3u8$/);
+    const path = new URL(source).pathname;
+    const match = path.match(/^\/hls\/([^/]+)\/index\.m3u8$/) || path.match(/^\/stream\/([^/]+)$/);
     ticket = match ? match[1] : '';
     duration = Number(playback.duration) || 0;
     baseOffset = 0;
     const seekable = playback.seekable === true || playback.seekable === 'true';
+    directSeek = playback.stream_type === 'mpegts';
     const customControls = !isLive && duration > 0 && seekable;
     $('vodControls').hidden = !customControls;
     video.toggleAttribute('controls', !customControls);
