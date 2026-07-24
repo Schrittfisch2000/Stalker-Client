@@ -323,42 +323,46 @@ function destroyPlayer() {
   $('epg').textContent = '';
 }
 
-function startMpegTsPlayer(source, generation, attempt = 0) {
+function startMpegTsPlayer(source, generation, playback = {}) {
   const video = $('player');
   if (generation !== state.playerGeneration || !window.mpegts || !mpegts.isSupported()) return;
 
-  const engine = mpegts.createPlayer(
-    { type: 'mpegts', isLive: true, url: source },
-    {
-      enableWorker: true,
-      enableStashBuffer: true,
-      stashInitialSize: 1024 * 1024,
-      lazyLoad: false,
-      autoCleanupSourceBuffer: true,
-      autoCleanupMaxBackwardDuration: 30,
-      autoCleanupMinBackwardDuration: 10,
-      liveBufferLatencyChasing: true,
-      liveBufferLatencyMaxLatency: 5,
-      liveBufferLatencyMinRemain: 1,
-      fixAudioTimestampGap: true
-    }
-  );
+  const engine = mpegts.createPlayer({
+    type: 'mpegts',
+    isLive: playback.is_live === true || playback.is_live === 'true',
+    url: source
+  });
   state.mpegts = engine;
   engine.attachMediaElement(video);
   engine.on(mpegts.Events.ERROR, (type, detail) => {
     if (generation !== state.playerGeneration || engine !== state.mpegts) return;
-    console.warn('MPEG-TS-Live-Stream wird neu verbunden:', type, detail);
-    try { engine.pause(); } catch (_) {}
-    try { engine.unload(); } catch (_) {}
-    try { engine.detachMediaElement(); } catch (_) {}
-    try { engine.destroy(); } catch (_) {}
-    state.mpegts = null;
-    const delay = Math.min(5000, 750 * (attempt + 1));
-    $('playerMeta').textContent = 'Live-Stream wird neu verbunden …';
+    console.warn('MPEG-TS-Wiedergabe verwendet den kompatiblen HLS-Fallback:', type, detail);
+    const fallback = playback.fallback_url;
+    $('playerMeta').textContent = fallback
+      ? 'Browser-Codec nicht kompatibel; kompatibler Stream wird vorbereitet …'
+      : `Playerfehler: ${detail || type}`;
+    if (!fallback) return;
     state.mpegtsRetryTimer = setTimeout(() => {
       state.mpegtsRetryTimer = null;
-      startMpegTsPlayer(`${source}${source.includes('?') ? '&' : '?'}_retry=${Date.now()}`, generation, attempt + 1);
-    }, delay);
+      if (generation !== state.playerGeneration || engine !== state.mpegts) return;
+      try { engine.pause(); } catch (_) {}
+      try { engine.unload(); } catch (_) {}
+      try { engine.detachMediaElement(); } catch (_) {}
+      try { engine.destroy(); } catch (_) {}
+      state.mpegts = null;
+      const fallbackSource = new URL(fallback, window.location.href).href;
+      configureVodControls(fallbackSource, playback.is_live === true || playback.is_live === 'true', {
+        ...playback,
+        stream_type: 'hls'
+      });
+      if (window.Hls && Hls.isSupported()) {
+        state.hls = new Hls(hlsOptions());
+        configureHlsInstance(state.hls, fallbackSource, generation, playback.is_live === true || playback.is_live === 'true');
+      } else {
+        video.src = fallbackSource;
+        video.play().catch((error) => { $('playerMeta').textContent = `Playerfehler: ${error.message}`; });
+      }
+    }, 0);
   });
   engine.load();
   const playResult = engine.play();
@@ -379,8 +383,9 @@ function attachPlayer(url, isLive = false, playback = {}) {
   };
   video.onplaying = () => { if ($('playerMeta').textContent === 'Stream wird geladen …') $('playerMeta').textContent = ''; };
 
-  if (isLive && playback.stream_type === 'mpegts' && window.mpegts && mpegts.isSupported()) {
-    startMpegTsPlayer(absoluteUrl, generation);
+  playback.is_live = isLive ? 'true' : 'false';
+  if (playback.stream_type === 'mpegts' && window.mpegts && mpegts.isSupported()) {
+    startMpegTsPlayer(absoluteUrl, generation, playback);
   } else if (window.Hls && Hls.isSupported()) {
     state.hls = new Hls(hlsOptions());
     configureHlsInstance(state.hls, absoluteUrl, generation, isLive);
