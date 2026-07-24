@@ -66,7 +66,23 @@ def _cpu_usage() -> dict[str, Any]:
 def _session_info() -> dict[str, Any]:
     sessions = list(main._hls_sessions.values())
     running = sum(1 for session in sessions if session.get("process") and session["process"].returncode is None)
-    return {"hls_sessions": len(sessions), "ffmpeg_running": running}
+    mode_counts = {
+        "playback_live": 0,
+        "playback_remux": 0,
+        "playback_audio_transcode": 0,
+        "playback_full_transcode": 0,
+    }
+    mode_keys = {
+        "live-transcode": "playback_live",
+        "remux": "playback_remux",
+        "audio-transcode": "playback_audio_transcode",
+        "full-transcode": "playback_full_transcode",
+    }
+    for session in sessions:
+        key = mode_keys.get(str(session.get("playback_mode", "")))
+        if key:
+            mode_counts[key] += 1
+    return {"hls_sessions": len(sessions), "ffmpeg_running": running, **mode_counts}
 
 
 def system_snapshot() -> dict[str, Any]:

@@ -1,6 +1,6 @@
 # Stalker Client Docker
 
-**Aktuelle Version: 1.0.39**
+**Aktuelle Version: 1.0.40**
 
 Stalker Client läuft als Docker-WebApp für kompatible Stalker-/MAG-Portale. Das Repository ist auf den Docker-Betrieb ausgerichtet; normale Installationen verwenden das fertige Docker-Hub-Image und bauen nicht lokal.
 
@@ -41,6 +41,16 @@ Die WebApp wählt den Wiedergabeweg passend zum Gerät:
 Auf iPhone und iPad bleibt der Player mit `playsinline` innerhalb der WebApp. Safari kann abhängig von Gerät und Benutzereinstellung trotzdem seine systemeigene Vollbildsteuerung verwenden.
 
 Bei H.264-Filmen und -Episoden wird das Video ohne Qualitätsverlust direkt in HLS umgepackt. Nur wenn der Videocodec nicht browserkompatibel ist, codiert FFmpeg das Bild nach H.264. Mehrere gleichzeitig laufende Transcoding-Sitzungen erhöhen die CPU-Last weiterhin entsprechend.
+
+## Technische Wiedergabestrategie
+
+Filme und Episoden werden vor dem Start einmalig mit FFprobe analysiert. Aus Laufzeit, Video-Codec und Audio-Codec entsteht ein einheitlicher Wiedergabeplan:
+
+- `remux`: H.264-Video und AAC-Audio werden ohne Neucodierung übernommen.
+- `audio-transcode`: H.264-Video bleibt unverändert; nur inkompatibles Audio wird nach AAC gewandelt.
+- `full-transcode`: inkompatibles Video wird nach H.264 gewandelt; kompatibles AAC-Audio bleibt unverändert.
+
+Die Analyse wird im signierten Wiedergabeticket weitergereicht und beim HLS-Start nicht erneut ausgeführt. Der tatsächlich laufende Modus wird in den Container-Logs und in den regelmäßigen Systemdiagnosen sichtbar. Dadurch sind CPU-Last und Codec-Probleme eindeutig einer Wiedergabesitzung zuzuordnen.
 
 ## Benötigte Dateien
 
@@ -396,7 +406,7 @@ Nützliche Prüfungen:
 
 - Containerstatus ist `running` oder `healthy`.
 - Die Weboberfläche antwortet unter Port 8080 oder deinem geänderten Port.
-- In der Oberfläche wird Version `1.0.39` angezeigt.
+- In der Oberfläche wird Version `1.0.40` angezeigt.
 - Bilder und Poster werden über `/api/image?...` geladen, wenn die Seite über HTTPS läuft.
 
 Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
@@ -475,8 +485,8 @@ Nach erfolgreichen Prüfungen auf `main` veröffentlicht GitHub Actions automati
 
 ```text
 schrittfisch2000/stalker-client:latest
-schrittfisch2000/stalker-client:1.0.39
-schrittfisch2000/stalker-client:v1.0.39
+schrittfisch2000/stalker-client:1.0.40
+schrittfisch2000/stalker-client:v1.0.40
 ```
 
 ## Lizenz und Nutzung
