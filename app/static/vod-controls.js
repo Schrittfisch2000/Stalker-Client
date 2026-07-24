@@ -4,6 +4,7 @@
   let baseOffset = 0;
   let seeking = false;
   let directSeek = false;
+  let seekPending = false;
 
   function formatTime(value) {
     const seconds = Math.max(0, Math.floor(Number(value) || 0));
@@ -33,36 +34,50 @@
   }
 
   async function seekTo(position) {
-    if (!ticket || !duration) return;
+    if (!ticket || !duration || seekPending) return;
     const video = $('player');
     if (directSeek) {
       video.currentTime = position;
       updateControls();
       return;
     }
+    seekPending = true;
+    $('vodSeek').disabled = true;
     const wasPaused = video.paused;
-    $('playerMeta').textContent = `Springe zu ${formatTime(position)} …`;
-    const result = await api(`/api/vod-seek/${encodeURIComponent(ticket)}`, {
-      method: 'POST',
-      body: JSON.stringify({ position }),
-    });
-    baseOffset = Number(result.position) || 0;
-    const generation = ++state.playerGeneration;
-    if (state.hls) {
-      state.hls.destroy();
-      state.hls = null;
+    try {
+      $('playerMeta').textContent = `Springe zu ${formatTime(position)} …`;
+      const result = await api(`/api/vod-seek/${encodeURIComponent(ticket)}`, {
+        method: 'POST',
+        body: JSON.stringify({ position }),
+      });
+      baseOffset = Number(result.position) || 0;
+      const generation = ++state.playerGeneration;
+      if (state.hls) {
+        state.hls.destroy();
+        state.hls = null;
+      }
+      const nextSource = new URL(result.url, window.location.href).href;
+      if (window.Hls && Hls.isSupported()) {
+        state.hls = new Hls(hlsOptions());
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Der neue Streamabschnitt wurde nicht rechtzeitig bereitgestellt.')), 20000);
+          state.hls.once(Hls.Events.MANIFEST_PARSED, () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+          configureHlsInstance(state.hls, nextSource, generation, false);
+        });
+        if (wasPaused) video.pause();
+      } else {
+        video.src = nextSource;
+        if (!wasPaused) await video.play();
+      }
+      $('playerMeta').textContent = '';
+      updateControls();
+    } finally {
+      seekPending = false;
+      $('vodSeek').disabled = false;
     }
-    const nextSource = new URL(result.url, window.location.href).href;
-    if (window.Hls && Hls.isSupported()) {
-      state.hls = new Hls(hlsOptions());
-      configureHlsInstance(state.hls, nextSource, generation, false);
-      if (wasPaused) state.hls.once(Hls.Events.MANIFEST_PARSED, () => video.pause());
-    } else {
-      video.src = nextSource;
-      if (!wasPaused) video.play().catch(() => {});
-    }
-    $('playerMeta').textContent = '';
-    updateControls();
   }
 
   window.configureVodControls = function configureVodControls(source, isLive, playback = {}) {
