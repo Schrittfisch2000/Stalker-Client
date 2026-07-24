@@ -77,6 +77,26 @@ class VodDurationTests(unittest.TestCase):
         self.assertIn("video.currentTime = position", source)
         self.assertIn("path.match(/^\\/stream\\/", source)
 
+    def test_hls_seek_waits_for_manifest_and_blocks_duplicate_requests(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app/static/vod-controls.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("seekPending", source)
+        self.assertIn("if (!ticket || !duration || seekPending) return", source)
+        self.assertIn("Hls.Events.MANIFEST_PARSED", source)
+        self.assertIn("'vodSeek').disabled = true", source)
+
+    def test_saved_progress_is_applied_only_once_per_playback(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1] / "app/static/media-ui.js"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("resumeApplied: false", source)
+        self.assertIn("mediaState.resumeApplied = false", source)
+        self.assertIn("if (!item || mediaState.resumeApplied) return", source)
+        self.assertIn("mediaState.resumeApplied = true", source)
+
 
 if __name__ == "__main__":
     unittest.main()

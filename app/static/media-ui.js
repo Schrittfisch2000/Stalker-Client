@@ -1,5 +1,5 @@
 (() => {
-  const mediaState = { favorites: [], progress: [], current: null, lastSaved: 0 };
+  const mediaState = { favorites: [], progress: [], current: null, lastSaved: 0, resumeApplied: false };
 
   function mediaId(item, type = state.type) {
     return String(item.id || item.movie_id || item.series_id || item.episode_id || item.ch_id || `${type}:${titleOf(item)}`);
@@ -87,6 +87,7 @@
   playItem = async function enhancedPlayItem(item, series = null) {
     const type = item.type || state.type;
     mediaState.current = payloadFor(item, type);
+    mediaState.resumeApplied = false;
     await originalPlayItem(item, series);
   };
 
@@ -118,7 +119,8 @@
     video.addEventListener('ended', () => saveCurrentProgress(true));
     video.addEventListener('loadedmetadata', () => {
       const item = mediaState.current;
-      if (!item) return;
+      if (!item || mediaState.resumeApplied) return;
+      mediaState.resumeApplied = true;
       const saved = progressMap().get(favoriteKey(item.type, item.id));
       const knownDuration = window.playerKnownDuration ? window.playerKnownDuration() : video.duration;
       if (saved && !saved.finished && saved.position > 5 && saved.position < knownDuration - 10) {
