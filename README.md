@@ -1,6 +1,6 @@
 # Stalker Client Docker
 
-**Aktuelle Version: 1.0.37**
+**Aktuelle Version: 1.0.38**
 
 Stalker Client läuft als Docker-WebApp für kompatible Stalker-/MAG-Portale. Das Repository ist auf den Docker-Betrieb ausgerichtet; normale Installationen verwenden das fertige Docker-Hub-Image und bauen nicht lokal.
 
@@ -26,6 +26,17 @@ Das Image wird für `linux/amd64` und `linux/arm64` veröffentlicht. Damit funkt
 - dauerhafte Konfiguration außerhalb des Containers
 - automatischer Neustart und Healthcheck
 - Updates über Docker Hub ohne erneutes Kopieren des Quellcodes
+
+## Browser- und Mobilgeräte
+
+Die WebApp wählt den Wiedergabeweg passend zum Gerät:
+
+- Safari unter macOS sowie Safari und andere Browser unter iOS/iPadOS verwenden natives HLS.
+- Android-Browser verwenden MPEG-TS über Media Source Extensions, sofern der Browser und der Streamcodec dies unterstützen, und wechseln sonst automatisch auf HLS.
+- Firefox, Chrome und Edge verwenden MPEG-TS für kompatible Streams und HLS als Rückfallweg.
+- Filme und Serien verwenden auf Apple-Geräten direkt den HLS-Weg, damit Laufzeit, Scrubber und Sprünge innerhalb des Titels zuverlässig funktionieren.
+
+Auf iPhone und iPad bleibt der Player mit `playsinline` innerhalb der WebApp. Safari kann abhängig von Gerät und Benutzereinstellung trotzdem seine systemeigene Vollbildsteuerung verwenden.
 
 ## Benötigte Dateien
 
@@ -381,7 +392,7 @@ Nützliche Prüfungen:
 
 - Containerstatus ist `running` oder `healthy`.
 - Die Weboberfläche antwortet unter Port 8080 oder deinem geänderten Port.
-- In der Oberfläche wird Version `1.0.37` angezeigt.
+- In der Oberfläche wird Version `1.0.38` angezeigt.
 - Bilder und Poster werden über `/api/image?...` geladen, wenn die Seite über HTTPS läuft.
 
 Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
@@ -460,8 +471,8 @@ Nach erfolgreichen Prüfungen auf `main` veröffentlicht GitHub Actions automati
 
 ```text
 schrittfisch2000/stalker-client:latest
-schrittfisch2000/stalker-client:1.0.37
-schrittfisch2000/stalker-client:v1.0.37
+schrittfisch2000/stalker-client:1.0.38
+schrittfisch2000/stalker-client:v1.0.38
 ```
 
 ## Lizenz und Nutzung

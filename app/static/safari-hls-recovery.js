@@ -4,7 +4,8 @@
   const PROACTIVE_REFRESH_MS = 70000;
 
   function isNativeHlsPlayer(video) {
-    const hlsJsActive = window.Hls && Hls.isSupported();
+    if (window.prefersNativeHlsPlayback?.()) return true;
+    const hlsJsActive = Boolean(window.state?.hls);
     return !hlsJsActive && Boolean(video.canPlayType('application/vnd.apple.mpegurl'));
   }
 

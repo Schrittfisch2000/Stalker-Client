@@ -57,7 +57,22 @@
         state.hls = null;
       }
       const nextSource = new URL(result.url, window.location.href).href;
-      if (window.Hls && Hls.isSupported()) {
+      if (window.prefersNativeHlsPlayback?.()) {
+        video.src = nextSource;
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Der neue Streamabschnitt wurde nicht rechtzeitig bereitgestellt.')), 20000);
+          video.addEventListener('canplay', () => {
+            clearTimeout(timeout);
+            resolve();
+          }, { once: true });
+          video.addEventListener('error', () => {
+            clearTimeout(timeout);
+            reject(new Error('Der neue Streamabschnitt konnte nicht geladen werden.'));
+          }, { once: true });
+          video.load();
+        });
+        if (!wasPaused) await video.play();
+      } else if (window.Hls && Hls.isSupported()) {
         state.hls = new Hls(hlsOptions());
         await new Promise((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error('Der neue Streamabschnitt wurde nicht rechtzeitig bereitgestellt.')), 20000);
