@@ -1,7 +1,6 @@
 (() => {
   const originalFetch = window.fetch.bind(window);
   let access = null;
-  let history = [];
 
   const request = async (path, options = {}) => {
     const response = await originalFetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
@@ -12,7 +11,6 @@
   };
 
   const accessPromise = request('/api/access/me').then((value) => { access = value; return value; }).catch(() => null);
-  const historyPromise = request('/api/history').then((value) => { history = Array.isArray(value) ? value : []; return history; }).catch(() => []);
 
   const categoryId = (item) => String(item?.id ?? item?.genre_id ?? item?.category_id ?? item?.tv_genre_id ?? '');
   const normalize = (value) => Array.isArray(value) ? value : (Array.isArray(value?.data) ? value.data : (Array.isArray(value?.js) ? value.js : []));
@@ -47,36 +45,8 @@
       }
     }
 
-    if (url === '/api/play' && method === 'POST' && response.ok) {
-      try {
-        const body = JSON.parse(options.body || '{}');
-        if (body.type === 'vod' || body.type === 'series') {
-          const item = body.item || {};
-          const entry = {
-            type: body.type,
-            id: item.episode_id || item.movie_id || item.series_id || item.id || `${body.type}:${item.name || item.title || ''}`,
-            title: item.name || item.title || item.o_name || item.episode_name || 'Ohne Titel'
-          };
-          originalFetch('/api/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) });
-          history = [entry, ...history.filter((old) => !(old.type === entry.type && String(old.id) === String(entry.id)))];
-          setTimeout(markWatchedCards, 100);
-        }
-      } catch (_) {}
-    }
     return response;
   };
-
-  function markWatchedCards() {
-    const watchedTitles = new Set(history.map((entry) => String(entry.title || '').trim().toLowerCase()));
-    document.querySelectorAll('#items .card').forEach((card) => {
-      const title = card.querySelector('h3')?.textContent?.trim().toLowerCase();
-      if (!title || !watchedTitles.has(title) || card.querySelector('.watched-badge')) return;
-      const badge = document.createElement('span');
-      badge.className = 'watched-badge';
-      badge.textContent = '✓ Gesehen';
-      card.append(badge);
-    });
-  }
 
   async function openAccessDialog(username) {
     let dialog = document.getElementById('accessDialog');
@@ -146,14 +116,13 @@
   }
 
   const style = document.createElement('style');
-  style.textContent = '.watched-badge{position:absolute;top:.5rem;right:.5rem;background:rgba(0,0,0,.85);color:#46d369;padding:.3rem .5rem;border-radius:999px;font-size:.72rem;font-weight:800}.access-dialog{width:min(900px,95vw);color:#fff;background:#151515;border:1px solid #333;border-radius:12px;padding:22px}.access-head{display:flex;justify-content:space-between;gap:1rem}.access-head h2{margin:0}.access-head button{background:transparent;border:0;color:#fff;font-size:2rem}.access-group{margin:1rem 0;padding:1rem;background:#202020;border-radius:8px}.access-group h3{margin-top:0}.access-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.5rem;max-height:14rem;overflow:auto}.access-list label,.access-all{display:flex;gap:.45rem;align-items:center}.access-actions{display:flex;justify-content:flex-end;gap:.7rem}.access-actions button{padding:.7rem 1rem;border:0;border-radius:7px}';
+  style.textContent = '.access-dialog{width:min(900px,95vw);color:#fff;background:#151515;border:1px solid #333;border-radius:12px;padding:22px}.access-head{display:flex;justify-content:space-between;gap:1rem}.access-head h2{margin:0}.access-head button{background:transparent;border:0;color:#fff;font-size:2rem}.access-group{margin:1rem 0;padding:1rem;background:#202020;border-radius:8px}.access-group h3{margin-top:0}.access-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.5rem;max-height:14rem;overflow:auto}.access-list label,.access-all{display:flex;gap:.45rem;align-items:center}.access-actions{display:flex;justify-content:flex-end;gap:.7rem}.access-actions button{padding:.7rem 1rem;border:0;border-radius:7px}';
   document.head.append(style);
 
   document.addEventListener('DOMContentLoaded', async () => {
-    await Promise.all([accessPromise, historyPromise]);
-    const observer = new MutationObserver(() => { markWatchedCards(); addAccessButtons(); });
+    await accessPromise;
+    const observer = new MutationObserver(addAccessButtons);
     observer.observe(document.body, { childList: true, subtree: true });
-    markWatchedCards();
     addAccessButtons();
   });
 })();

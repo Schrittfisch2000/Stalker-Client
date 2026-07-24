@@ -15,6 +15,7 @@ from .storage import data_file
 FAVORITES_FILE = Path(os.getenv("FAVORITES_FILE", str(data_file("favoriten.json"))))
 PROGRESS_FILE = Path(os.getenv("PROGRESS_FILE", str(data_file("fortschritt.json"))))
 MEDIA_TYPES = {"itv", "vod", "series"}
+WATCHED_THRESHOLD = 0.9
 router = APIRouter(prefix="/api")
 
 
@@ -78,6 +79,10 @@ def _entry(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_finished(position: float, duration: float, explicit: bool = False) -> bool:
+    return explicit or (duration > 0 and position / duration >= WATCHED_THRESHOLD)
+
+
 @router.get("/favorites")
 async def list_favorites(request: Request, media_type: str | None = None) -> list[dict[str, Any]]:
     user = require_user(request)
@@ -134,7 +139,7 @@ async def save_progress(payload: dict[str, Any], request: Request) -> dict[str, 
         duration = max(0.0, float(payload.get("duration", 0)))
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail="Ungültiger Wiedergabefortschritt") from exc
-    finished = bool(payload.get("finished")) or (duration > 0 and position / duration >= 0.9)
+    finished = _is_finished(position, duration, bool(payload.get("finished")))
     entry.update({"position": 0 if finished else round(position, 2), "duration": round(duration, 2), "finished": finished, "percent": 100 if finished else round((position / duration) * 100, 1) if duration > 0 else 0})
     data = _read(PROGRESS_FILE)
     values = data.get(user["username"], [])

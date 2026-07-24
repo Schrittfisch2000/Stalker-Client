@@ -18,6 +18,16 @@ from .stalker import StalkerClient
 _vod_seek_offsets: dict[str, float] = {}
 
 
+def _vod_video_args(video_codec: str) -> list[str]:
+    if video_codec == "h264":
+        return ["-c:v", "copy"]
+    return [
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
+        "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
+    ]
+
+
 def _create_ticket(
     url: str,
     settings: Settings,
@@ -150,6 +160,7 @@ async def _start_direct_ffmpeg(
     headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
     ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
     seek_offset = max(0.0, _vod_seek_offsets.get(session_id, 0.0))
+    video_codec = await _probe_video_codec(str(data["url"]), ffmpeg_headers)
     command = [
         "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
         "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
@@ -161,9 +172,9 @@ async def _start_direct_ffmpeg(
         "-i", str(data["url"]),
         "-af", "aresample=async=1000:first_pts=0",
         "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
-        "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
+    ]
+    command += _vod_video_args(video_codec)
+    command += [
         "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "128k",
         "-max_muxing_queue_size", "2048",
         "-avoid_negative_ts", "make_zero",
@@ -185,12 +196,38 @@ async def _start_direct_ffmpeg(
         raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
     asyncio.create_task(main.log_ffmpeg(session_id, process))
     main.logger.info(
-        "FFmpeg-HLS gestartet: Session=%s, Typ=%s, Start=%.3fs",
+        "FFmpeg-HLS gestartet: Session=%s, Typ=%s, Start=%.3fs, Video=%s",
         session_id,
         data["media_type"],
         seek_offset,
+        "copy" if video_codec == "h264" else "h264-transcode",
     )
     return process
+
+
+async def _probe_video_codec(url: str, ffmpeg_headers: str) -> str:
+    command = [
+        "ffprobe", "-v", "error", "-rw_timeout", "8000000",
+        "-headers", ffmpeg_headers,
+        "-select_streams", "v:0",
+        "-show_entries", "stream=codec_name",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        url,
+    ]
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+        return stdout.decode("utf-8", errors="replace").strip().lower()
+    except (OSError, asyncio.TimeoutError):
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        return ""
 
 
 def _duration_from_item(item: dict[str, Any]) -> float | None:
