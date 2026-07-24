@@ -1,6 +1,6 @@
 # Stalker Client Docker
 
-**Aktuelle Version: 1.0.38**
+**Aktuelle Version: 1.0.39**
 
 Stalker Client läuft als Docker-WebApp für kompatible Stalker-/MAG-Portale. Das Repository ist auf den Docker-Betrieb ausgerichtet; normale Installationen verwenden das fertige Docker-Hub-Image und bauen nicht lokal.
 
@@ -21,11 +21,13 @@ Das Image wird für `linux/amd64` und `linux/arm64` veröffentlicht. Damit funkt
 - vorgewärmte Live-TV-Wechsel mit Audio-/Video-Synchronisierung
 - mehrere Portale und Benutzerkonten
 - Favoriten und Wiedergabefortschritt
+- „Gesehen“-Markierung erst ab 90 Prozent Wiedergabefortschritt
 - Downloads, sofern sie vom Anbieter erlaubt sind
 - HTTPS-tauglicher Bildproxy für Poster und Logos
 - dauerhafte Konfiguration außerhalb des Containers
 - automatischer Neustart und Healthcheck
 - Updates über Docker Hub ohne erneutes Kopieren des Quellcodes
+- CPU-sparendes H.264-Remuxing für Filme und Episoden mit automatischem Transcoding-Fallback
 
 ## Browser- und Mobilgeräte
 
@@ -37,6 +39,8 @@ Die WebApp wählt den Wiedergabeweg passend zum Gerät:
 - Filme und Serien verwenden auf Apple-Geräten direkt den HLS-Weg, damit Laufzeit, Scrubber und Sprünge innerhalb des Titels zuverlässig funktionieren.
 
 Auf iPhone und iPad bleibt der Player mit `playsinline` innerhalb der WebApp. Safari kann abhängig von Gerät und Benutzereinstellung trotzdem seine systemeigene Vollbildsteuerung verwenden.
+
+Bei H.264-Filmen und -Episoden wird das Video ohne Qualitätsverlust direkt in HLS umgepackt. Nur wenn der Videocodec nicht browserkompatibel ist, codiert FFmpeg das Bild nach H.264. Mehrere gleichzeitig laufende Transcoding-Sitzungen erhöhen die CPU-Last weiterhin entsprechend.
 
 ## Benötigte Dateien
 
@@ -392,7 +396,7 @@ Nützliche Prüfungen:
 
 - Containerstatus ist `running` oder `healthy`.
 - Die Weboberfläche antwortet unter Port 8080 oder deinem geänderten Port.
-- In der Oberfläche wird Version `1.0.38` angezeigt.
+- In der Oberfläche wird Version `1.0.39` angezeigt.
 - Bilder und Poster werden über `/api/image?...` geladen, wenn die Seite über HTTPS läuft.
 
 Vor dem Teilen von Logs müssen Portaladressen, MAC-Adressen, Tokens, Tickets und Zugangsdaten entfernt werden.
@@ -471,8 +475,8 @@ Nach erfolgreichen Prüfungen auf `main` veröffentlicht GitHub Actions automati
 
 ```text
 schrittfisch2000/stalker-client:latest
-schrittfisch2000/stalker-client:1.0.38
-schrittfisch2000/stalker-client:v1.0.38
+schrittfisch2000/stalker-client:1.0.39
+schrittfisch2000/stalker-client:v1.0.39
 ```
 
 ## Lizenz und Nutzung

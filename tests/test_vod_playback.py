@@ -3,10 +3,22 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from app.safari_hls_fix import _duration_from_item, _play_response
+from app.safari_hls_fix import _duration_from_item, _play_response, _vod_video_args
 
 
 class VodDurationTests(unittest.TestCase):
+    def test_h264_vod_is_remuxed_without_video_reencoding(self) -> None:
+        args = _vod_video_args("h264")
+
+        self.assertEqual(args, ["-c:v", "copy"])
+        self.assertNotIn("libx264", args)
+
+    def test_incompatible_vod_keeps_h264_fallback(self) -> None:
+        args = _vod_video_args("hevc")
+
+        self.assertIn("libx264", args)
+        self.assertIn("ultrafast", args)
+
     def test_duration_uses_seconds_from_portal_metadata(self) -> None:
         self.assertEqual(_duration_from_item({"duration": 5_400}), 5_400)
 
@@ -112,6 +124,15 @@ class VodDurationTests(unittest.TestCase):
         self.assertIn("mediaState.resumeApplied = false", source)
         self.assertIn("if (!item || mediaState.resumeApplied) return", source)
         self.assertIn("mediaState.resumeApplied = true", source)
+
+    def test_watched_badge_is_not_created_when_playback_only_started(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        access = (root / "app/static/access-ui.js").read_text(encoding="utf-8")
+        media = (root / "app/static/media-ui.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("watched-badge", access)
+        self.assertNotIn("markWatchedCards", access)
+        self.assertIn("if (progress?.finished)", media)
 
 
 if __name__ == "__main__":
