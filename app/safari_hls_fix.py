@@ -13,19 +13,10 @@ from fastapi import Depends, HTTPException
 from . import main
 from .config import Settings
 from .live_ts_proxy import run_live_ts_proxy
+from .playback_policy import MediaProbe, PlaybackPlan, choose_playback_plan
 from .stalker import StalkerClient
 
 _vod_seek_offsets: dict[str, float] = {}
-
-
-def _vod_video_args(video_codec: str) -> list[str]:
-    if video_codec == "h264":
-        return ["-c:v", "copy"]
-    return [
-        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-profile:v", "main", "-level", "4.0", "-pix_fmt", "yuv420p",
-        "-sc_threshold", "0", "-force_key_frames", "expr:gte(t,n_forced*1)",
-    ]
 
 
 def _create_ticket(
@@ -154,13 +145,17 @@ async def _start_direct_ffmpeg(
     portal: StalkerClient,
     directory: Path,
     playlist: Path,
-) -> asyncio.subprocess.Process:
+) -> tuple[asyncio.subprocess.Process, PlaybackPlan]:
     start_number = _next_segment_number(directory)
     headers = portal.portal_headers_for_stream()
     headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
     ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
     seek_offset = max(0.0, _vod_seek_offsets.get(session_id, 0.0))
-    video_codec = await _probe_video_codec(str(data["url"]), ffmpeg_headers)
+    playback = data.get("playback") if isinstance(data.get("playback"), dict) else {}
+    probe = MediaProbe.from_ticket(playback.get("probe"))
+    if not probe.video_codec or not probe.audio_codec:
+        probe = await _probe_media(str(data["url"]), portal)
+    plan = choose_playback_plan(probe)
     command = [
         "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
         "-rw_timeout", "20000000", "-headers", ffmpeg_headers,
@@ -170,12 +165,11 @@ async def _start_direct_ffmpeg(
         command += ["-ss", f"{seek_offset:.3f}"]
     command += [
         "-i", str(data["url"]),
-        "-af", "aresample=async=1000:first_pts=0",
         "-map", "0:v:0?", "-map", "0:a:0?", "-sn", "-dn",
     ]
-    command += _vod_video_args(video_codec)
+    command += plan.video_args()
+    command += plan.audio_args()
     command += [
-        "-c:a", "aac", "-profile:a", "aac_low", "-ar", "48000", "-ac", "2", "-b:a", "128k",
         "-max_muxing_queue_size", "2048",
         "-avoid_negative_ts", "make_zero",
         "-f", "hls", "-hls_time", "1",
@@ -196,22 +190,26 @@ async def _start_direct_ffmpeg(
         raise HTTPException(status_code=500, detail="FFmpeg is not available") from exc
     asyncio.create_task(main.log_ffmpeg(session_id, process))
     main.logger.info(
-        "FFmpeg-HLS gestartet: Session=%s, Typ=%s, Start=%.3fs, Video=%s",
+        "FFmpeg-HLS gestartet: Session=%s, Typ=%s, Start=%.3fs, Modus=%s, Video=%s, Audio=%s",
         session_id,
         data["media_type"],
         seek_offset,
-        "copy" if video_codec == "h264" else "h264-transcode",
+        plan.mode,
+        plan.video_codec,
+        plan.audio_codec,
     )
-    return process
+    return process, plan
 
 
-async def _probe_video_codec(url: str, ffmpeg_headers: str) -> str:
+async def _probe_media(url: str, portal: StalkerClient) -> MediaProbe:
+    headers = portal.portal_headers_for_stream()
+    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
+    ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
     command = [
-        "ffprobe", "-v", "error", "-rw_timeout", "8000000",
+        "ffprobe", "-v", "error", "-rw_timeout", "10000000",
         "-headers", ffmpeg_headers,
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_name",
-        "-of", "default=noprint_wrappers=1:nokey=1",
+        "-show_entries", "format=duration,format_name:stream=codec_type,codec_name",
+        "-of", "json",
         url,
     ]
     process: asyncio.subprocess.Process | None = None
@@ -221,13 +219,14 @@ async def _probe_video_codec(url: str, ffmpeg_headers: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
-        return stdout.decode("utf-8", errors="replace").strip().lower()
-    except (OSError, asyncio.TimeoutError):
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=12)
+        payload = json.loads(stdout.decode("utf-8", errors="replace"))
+        return MediaProbe.from_ffprobe(payload)
+    except (OSError, asyncio.TimeoutError, json.JSONDecodeError, TypeError):
         if process is not None and process.returncode is None:
             process.kill()
             await process.wait()
-        return ""
+        return MediaProbe()
 
 
 def _duration_from_item(item: dict[str, Any]) -> float | None:
@@ -282,34 +281,6 @@ def _play_response(
     }
 
 
-async def _probe_duration(url: str, portal: StalkerClient) -> float | None:
-    headers = portal.portal_headers_for_stream()
-    headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in portal.cookies.items())
-    ffmpeg_headers = "".join(f"{key}: {value}\r\n" for key, value in headers.items())
-    command = [
-        "ffprobe", "-v", "error", "-rw_timeout", "10000000",
-        "-headers", ffmpeg_headers,
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        url,
-    ]
-    process: asyncio.subprocess.Process | None = None
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=12)
-        duration = float(stdout.decode("utf-8", errors="replace").strip())
-    except (OSError, ValueError, asyncio.TimeoutError):
-        if process is not None and process.returncode is None:
-            process.kill()
-            await process.wait()
-        return None
-    return duration if duration >= 60 else None
-
-
 async def _ensure_hls_session(
     ticket: str,
     settings: Settings,
@@ -334,8 +305,11 @@ async def _ensure_hls_session(
             process, proxy_task = await _start_live_ffmpeg(
                 session_id, data, settings, portal, directory, playlist
             )
+            playback_plan = None
         else:
-            process = await _start_direct_ffmpeg(session_id, data, portal, directory, playlist)
+            process, playback_plan = await _start_direct_ffmpeg(
+                session_id, data, portal, directory, playlist
+            )
             proxy_task = None
 
         main._hls_sessions[session_id] = {
@@ -345,6 +319,9 @@ async def _ensure_hls_session(
             "last_access": time.time(),
             "started_at": time.time(),
             "media_type": media_type,
+            "playback_mode": playback_plan.mode if playback_plan else "live-transcode",
+            "video_codec": playback_plan.video_codec if playback_plan else "",
+            "audio_codec": playback_plan.audio_codec if playback_plan else "",
         }
     return session_id, playlist
 
@@ -372,6 +349,14 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
 
     url = await portal.create_link(media_type, command, str(series) if series is not None else None, item)
     playback = {"cmd": command, "series": series, "item": item}
+    probe = MediaProbe()
+    duration = None
+    plan = None
+    if media_type in {"vod", "series"}:
+        probe = await _probe_media(url, portal)
+        playback["probe"] = probe.to_ticket()
+        duration = _duration_from_item(item) or probe.duration
+        plan = choose_playback_plan(probe)
     ticket = _create_ticket(url, settings, media_type, playback)
     if main.is_hls(url):
         playback_url = f"/stream/{ticket}"
@@ -380,23 +365,28 @@ async def _play(payload: dict[str, Any], settings: Settings, portal: StalkerClie
         playback_url = f"/stream/{ticket}"
         stream_type = "mpegts"
     fallback_url = "" if main.is_hls(url) else f"/hls/{ticket}/index.m3u8"
-    duration = None
-    if media_type in {"vod", "series"}:
-        duration = _duration_from_item(item) or await _probe_duration(url, portal)
     main.logger.info(
-        "Wiedergabe vorbereitet: Typ=%s, Format=%s, Dauer=%s, Spulbar=%s",
+        "Wiedergabe vorbereitet: Typ=%s, Format=%s, Dauer=%s, Spulbar=%s, Modus=%s",
         media_type,
         "direct-hls" if main.is_hls(url) else "browser-mpegts",
         f"{duration:.3f}s" if duration else "unbekannt",
         bool(duration and not main.is_hls(url)),
+        plan.mode if plan else "live",
     )
-    return _play_response(
+    response = _play_response(
         playback_url,
         round(duration, 3) if duration else None,
         bool(duration and not main.is_hls(url)),
         stream_type,
         fallback_url,
     )
+    response["playback_mode"] = (
+        "direct-hls" if main.is_hls(url) else "direct-mpegts"
+    )
+    response["fallback_mode"] = plan.mode if plan and fallback_url else ""
+    response["video_codec"] = plan.video_codec if plan else ""
+    response["audio_codec"] = plan.audio_codec if plan else ""
+    return response
 
 
 async def _seek_vod(

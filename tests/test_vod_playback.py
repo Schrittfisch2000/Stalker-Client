@@ -3,18 +3,19 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
-from app.safari_hls_fix import _duration_from_item, _play_response, _vod_video_args
+from app.playback_policy import MediaProbe, choose_playback_plan
+from app.safari_hls_fix import _duration_from_item, _play_response
 
 
 class VodDurationTests(unittest.TestCase):
     def test_h264_vod_is_remuxed_without_video_reencoding(self) -> None:
-        args = _vod_video_args("h264")
+        args = choose_playback_plan(MediaProbe(video_codec="h264")).video_args()
 
         self.assertEqual(args, ["-c:v", "copy"])
         self.assertNotIn("libx264", args)
 
     def test_incompatible_vod_keeps_h264_fallback(self) -> None:
-        args = _vod_video_args("hevc")
+        args = choose_playback_plan(MediaProbe(video_codec="hevc")).video_args()
 
         self.assertIn("libx264", args)
         self.assertIn("ultrafast", args)
